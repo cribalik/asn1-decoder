@@ -16,7 +16,6 @@
 #include <stdarg.h>
 #include <inttypes.h>
 #include <stdint.h>
-#include <ncurses.h>
 #include <assert.h>
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -24,8 +23,14 @@
   #include <io.h>
 #else
 /* linux */
+  #define COMPILE_INTERACTIVE_MODE
   #include <unistd.h>
 #endif
+
+#ifdef COMPILE_INTERACTIVE_MODE
+  #include <ncurses.h>
+#endif
+
 
 #define RED_STR "\x1B[31m"
 #define GREEN_STR "\x1B[32m"
@@ -97,8 +102,11 @@ static struct {
 
   Object *current_object;
 
-  WINDOW *statusw, *objw, *editw, *edit_input;
-  Array(char) edit_buffer;
+  #ifdef COMPILE_INTERACTIVE_MODE
+    WINDOW *statusw, *objw, *editw, *edit_input;
+    Array(char) edit_buffer;
+  #endif
+
 } Global;
 
 int strstri(const char *needle, const char *haystack) {
@@ -788,6 +796,80 @@ static void object_get_siblings(Object *obj, Object ***siblings, int *num_siblin
   object_get_children(obj->parent, siblings, num_siblings);
 }
 
+static u64 octet_to_int(Object *object) {
+  u64 val = 0;
+  int i;
+  for (i = 0; i < object->data.string.len; ++i)
+    val <<= 8, val |= object->data.string.value[i];
+  return val;
+}
+
+static int octet_is_ip_address(Object *object) {
+  /* TODO: ipv6 */
+  return object->data.string.len == 4 && (strstri("ipaddr", object->name) || strstri("ip", object->name));
+}
+
+static int octet_is_printable(Object *object) {
+  int i;
+  for (i = 0; i < object->data.string.len; ++i)
+    if (!isprint(object->data.string.value[i]))
+      return 0;
+  return 1;
+}
+
+static char* int_to_time(u64 val) {
+  static char date[32];
+  time_t t;
+  struct tm *tm_time;
+
+  t = val/1000;
+
+  /* 3 years old or 1 day in future is ok */
+  if (t >= time(0) + 60*60*24 || t <= time(0) - 60*60*24*365*3)
+    return 0;
+
+  tm_time = localtime(&t);
+  strftime(date, sizeof(date)-1, "%Y-%m-%d %H:%M:%S", tm_time);
+  sprintf(date+19, ".%"PRIu64, val % 1000);
+  return date;
+}
+
+static char* octet_to_numberstring(Object *object) {
+  static char number[17];
+  int i;
+  char *s = number;
+
+  if (object->data.string.len > 8)
+    return 0;
+
+  for (i = 0; i < object->data.string.len; ++i) {
+    unsigned char lo,hi,c;
+
+    c = object->data.string.value[i];
+    lo = c & 0xf;
+    hi = (c & 0xf0) >> 4;
+
+    if (lo != 0xf && lo > 9)
+      return 0;
+    if (lo != 0xf)
+      *s++ = '0'+lo;
+
+    if (hi != 0xf && hi > 9)
+      return 0;
+    if (hi != 0xf)
+      *s++ = '0'+hi;
+  }
+  *s = 0;
+
+  return number;
+}
+
+
+
+
+/** INTERACTIVE MODE **/
+
+#ifdef COMPILE_INTERACTIVE_MODE
 enum {
   CURSES_GREEN = 1,
   CURSES_BLUE = 2,
@@ -1176,74 +1258,6 @@ static int render_tree(WINDOW* window, Object *object, int x, int x_max, int *y,
   return 0;
 }
 
-static u64 octet_to_int(Object *object) {
-  u64 val = 0;
-  int i;
-  for (i = 0; i < object->data.string.len; ++i)
-    val <<= 8, val |= object->data.string.value[i];
-  return val;
-}
-
-static int octet_is_ip_address(Object *object) {
-  /* TODO: ipv6 */
-  return object->data.string.len == 4 && (strstri("ipaddr", object->name) || strstri("ip", object->name));
-}
-
-static int octet_is_printable(Object *object) {
-  int i;
-  for (i = 0; i < object->data.string.len; ++i)
-    if (!isprint(object->data.string.value[i]))
-      return 0;
-  return 1;
-}
-
-static char* int_to_time(u64 val) {
-  static char date[32];
-  time_t t;
-  struct tm *tm_time;
-
-  t = val/1000;
-
-  /* 3 years old or 1 day in future is ok */
-  if (t >= time(0) + 60*60*24 || t <= time(0) - 60*60*24*365*3)
-    return 0;
-
-  tm_time = localtime(&t);
-  strftime(date, sizeof(date)-1, "%Y-%m-%d %H:%M:%S", tm_time);
-  sprintf(date+19, ".%"PRIu64, val % 1000);
-  return date;
-}
-
-static char* octet_to_numberstring(Object *object) {
-  static char number[17];
-  int i;
-  char *s = number;
-
-  if (object->data.string.len > 8)
-    return 0;
-
-  for (i = 0; i < object->data.string.len; ++i) {
-    unsigned char lo,hi,c;
-
-    c = object->data.string.value[i];
-    lo = c & 0xf;
-    hi = (c & 0xf0) >> 4;
-
-    if (lo != 0xf && lo > 9)
-      return 0;
-    if (lo != 0xf)
-      *s++ = '0'+lo;
-
-    if (hi != 0xf && hi > 9)
-      return 0;
-    if (hi != 0xf)
-      *s++ = '0'+hi;
-  }
-  *s = 0;
-
-  return number;
-}
-
 static void render_object(WINDOW *window, Object *object, int x, int x_max, int y) {
   /* WARNING: If you make changes here, remember to mirror the changes in dump_object_tree */
   wmove(window, y, x);
@@ -1368,6 +1382,13 @@ static void render_object(WINDOW *window, Object *object, int x, int x_max, int 
       exit(1);
   }
 }
+
+
+#endif /* COMPILE_INTERACTIVE_MODE */
+
+
+
+
 
 static void dump_object_tree(Object *object, int indent, int max_indent) {
   Object **d;
@@ -1564,8 +1585,14 @@ int main(int argc, const char **argv) {
 
 
   /* interactive mode ? */
-  if (interactive)
-    run_interactive(start_type);
+  if (interactive) {
+    #ifdef COMPILE_INTERACTIVE_MODE
+      run_interactive(start_type);
+    #else
+      fprintf(stderr, "Interactive mode not supported on your platform\n");
+      exit(1);
+    #endif
+  }
   else
     dump_all(start_type);
 }

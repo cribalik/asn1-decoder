@@ -3,34 +3,6 @@
 #include "array.h"
 #include "defs.h"
 
-Typedef *type_alloc(Typedef type) {
-  Typedef *p = malloc(sizeof(*p));
-  *p = type;
-  return p;
-}
-
-Typedef *choice_create(Array(Tag) choices) {
-  Typedef r = {0};
-  r.header.type = TYPE_CHOICE;
-  r.choice.choices = choices;
-  return type_alloc(r);
-}
-
-Typedef *sequence_create(Array(Tag) items) {
-  Typedef r = {0};
-  r.header.type = TYPE_SEQUENCE;
-  r.sequence.items = items;
-  return type_alloc(r);
-}
-
-Tag tag_create(char *name, int id, Typedef *type) {
-  Tag t = {0};
-  t.name = name;
-  t.id = id;
-  t.type = type;
-  return t;
-}
-
 #include "y.tab.h"
 
 %}

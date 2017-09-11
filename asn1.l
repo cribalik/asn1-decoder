@@ -1,6 +1,25 @@
 %{
 #include <stdio.h>
+#include "array.h"
+#include "defs.h"
+
+Typedef choice_create(Array(Tag) choices) {
+  Typedef r = {0};
+  r.header.type = TYPE_CHOICE;
+  r.choice.choices = choices;
+  return r;
+}
+
+Tag tag_create(char *name, int id, Typedef *type) {
+  Tag t = {0};
+  t.name = name;
+  t.id = id;
+  t.type = type;
+  return t;
+}
+
 #include "y.tab.h"
+
 %}
 
 %option yylineno

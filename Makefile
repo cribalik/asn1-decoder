@@ -1,6 +1,6 @@
 all:
-	lex asn1.l
-	yacc -v -d asn1.y
+	lex lexer.l
+	yacc -d parser.y
 	cc lex.yy.c y.tab.c -o asn1 -ll
 
 clean:

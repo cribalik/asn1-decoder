@@ -48,10 +48,10 @@ definition:
 
 type:
 	NAME
-  { $$ = 0; } |
+  { $$ = typeref_create($1); } |
 
 	NAME sizeinfo
-  { $$ = 0; } |
+  { $$ = typeref_create($1); } |
 
 	CHOICE '{' tags '}'
   { $$ = choice_create((Array(Tag))$3); } |

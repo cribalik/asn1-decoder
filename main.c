@@ -7,6 +7,13 @@ Typedef *type_alloc(Typedef type) {
   return p;
 }
 
+Typedef *typeref_create(char *name) {
+  Typedef r = {0};
+  r.header.type = TYPE_REFERENCE;
+  r.reference.name = name;
+  return type_alloc(r);
+}
+
 Typedef *choice_create(Array(Tag) choices) {
   Typedef r = {0};
   r.header.type = TYPE_CHOICE;
@@ -48,12 +55,16 @@ int main(void) {
 
 	yyparse();
   for (i = 0; i < array_len(types); ++i) {
-    switch (types[i]->header.type) {
+    char *name = types[i]->header.name;
+    Typedef *t = types[i];
+    switch (t->header.type) {
       case TYPE_CHOICE:
-        printf("CHOICE '%s' - #tags: %i\n", types[i]->header.name, array_len(types[i]->choice.choices)); 
+        printf("'%s'- CHOICE - #tags: %i\n", name, array_len(t->choice.choices)); 
         break;
       case TYPE_SEQUENCE:
-        printf("SEQUENCE '%s' - #tags: %i\n", types[i]->header.name, array_len(types[i]->sequence.items)); 
+        printf("'%s' - SEQUENCE - #tags: %i\n", name, array_len(t->sequence.items)); 
+        break;
+      default:
         break;
     }
   }

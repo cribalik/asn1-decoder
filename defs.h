@@ -9,6 +9,8 @@ typedef union Typedef Typedef;
 typedef struct Tag Tag;
 
 enum Type {
+  TYPE_UNKNOWN,
+  TYPE_REFERENCE,
   TYPE_SEQUENCE,
   TYPE_BOOLEAN,
   TYPE_ENUM,
@@ -42,10 +44,16 @@ union Typedef {
     TypedefHeader header;
     Array(Tag) items;
   } sequence;
+
+  struct {
+    TypedefHeader header;
+    char *name;
+  } reference;
 };
 
-Typedef *choice_create(Array(Tag) choices);
 Tag tag_create(char *name, int id, Typedef *type);
+Typedef *choice_create(Array(Tag) choices);
 Typedef *sequence_create(Array(Tag) items);
+Typedef *type_create(char *name, Typedef *base);
 
 #endif /* DEFS_H */

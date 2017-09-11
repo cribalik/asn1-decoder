@@ -16,14 +16,21 @@ int yywrap(void) {
 	return 1;
 }
 
-static Array(Typedef) types;
+static Array(Typedef*) types;
 
 int main(void) {
   int i;
 
 	yyparse();
   for (i = 0; i < array_len(types); ++i) {
-    printf("%s CHOICE - %i tags\n", types[i].header.name, array_len(types[i].choice.choices)); 
+    switch (types[i]->header.type) {
+      case TYPE_CHOICE:
+        printf("CHOICE '%s' - #tags: %i\n", types[i]->header.name, array_len(types[i]->choice.choices)); 
+        break;
+      case TYPE_SEQUENCE:
+        printf("SEQUENCE '%s' - #tags: %i\n", types[i]->header.name, array_len(types[i]->sequence.items)); 
+        break;
+    }
   }
 }
 %}
@@ -41,7 +48,6 @@ int main(void) {
 
 %token <number> NUMBER
 %token <string> NAME
-%type <string> definition
 %type <tags> tags
 %type <tag> tag
 %type <type> type
@@ -59,16 +65,38 @@ cmdflag: IMPLICIT | TAGS ;
 definitions: | definitions definition ;
 
 definition:
-	NAME ASSIGNMENT type { if ($3) $3->header.name = $1; array_push(types, $3); } |
+	NAME ASSIGNMENT type
+  { 
+    if ($3) {
+      $3->header.name = $1;
+      array_push(types, $3);
+    }
+  } |
+
 	NAME INTEGER ASSIGNMENT NUMBER ;
+
 type:
-	NAME { $$ = 0; } |
-	NAME sizeinfo { $$ = 0; } |
-	CHOICE '{' tags '}' { $$ = choice_create((Array(Tag))$3); } |
-	SEQUENCE '{' tags '}' { $$ = 0; } |
-	SEQUENCE sizeinfo OF NAME { $$ = 0; } |
-	SEQUENCE OF NAME { $$ = 0; } |
-	BOOLEAN { $$ = 0; } |
+	NAME
+  { $$ = 0; } |
+
+	NAME sizeinfo
+  { $$ = 0; } |
+
+	CHOICE '{' tags '}'
+  { $$ = choice_create((Array(Tag))$3); } |
+
+	SEQUENCE '{' tags '}'
+  { $$ = sequence_create((Array(Tag))$3); } |
+
+	SEQUENCE sizeinfo OF NAME
+  { $$ = 0; } |
+
+	SEQUENCE OF NAME
+  { $$ = 0; } |
+
+	BOOLEAN
+  { $$ = 0; } |
+
 	OCTET_STRING { $$ = 0; } |
 	OCTET_STRING sizeinfo { $$ = 0; } |
 	BIT_STRING { $$ = 0; } |

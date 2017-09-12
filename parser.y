@@ -60,24 +60,36 @@ type:
   { $$ = sequence_create((Array(Tag))$3); } |
 
 	SEQUENCE sizeinfo OF NAME
-  { $$ = 0; } |
-
+  { $$ = list_create($4); } |
 	SEQUENCE OF NAME
-  { $$ = 0; } |
+  { $$ = list_create($3); } |
 
 	BOOLEAN
-  { $$ = 0; } |
+  { $$ = &boolean_type; } |
 
-	OCTET_STRING { $$ = 0; } |
-	OCTET_STRING sizeinfo { $$ = 0; } |
-	BIT_STRING { $$ = 0; } |
-  BIT_STRING enumdecl { $$ = 0; } |
-	BIT_STRING enumdecl sizeinfo { $$ = 0; } |
-	BIT_STRING sizeinfo { $$ = 0; } |
-	INTEGER { $$ = 0; } |
-	INTEGER enumdecl { $$ = 0; } |
-	INTEGER range { $$ = 0; } |
-	ENUMERATED enumdecl { $$ = 0; } ;
+	OCTET_STRING
+  { $$ = &octet_string_type; } |
+	OCTET_STRING sizeinfo
+  { $$ = &octet_string_type; } |
+
+	BIT_STRING
+  { $$ = &bit_string_type; } |
+  BIT_STRING enumdecl
+  { $$ = &bit_string_type; } |
+	BIT_STRING enumdecl sizeinfo
+  { $$ = &bit_string_type; } |
+	BIT_STRING sizeinfo
+  { $$ = &bit_string_type; } |
+
+	INTEGER
+  { $$ = &integer_type; } |
+	INTEGER enumdecl
+  { $$ = &integer_type; } |
+	INTEGER range
+  { $$ = &integer_type; } |
+
+	ENUMERATED enumdecl
+  { $$ = &integer_type; } ;
 
 tags:
 	tags ',' tag

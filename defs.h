@@ -15,8 +15,10 @@ enum Type {
   TYPE_BOOLEAN,
   TYPE_ENUM,
   TYPE_OCTET_STRING,
+  TYPE_BIT_STRING,
   TYPE_INTEGER,
-  TYPE_CHOICE
+  TYPE_CHOICE,
+  TYPE_LIST
 };
 
 struct TypedefHeader {
@@ -48,12 +50,22 @@ union Typedef {
   struct {
     TypedefHeader header;
     char *name;
+    Typedef *type; /* will be null until after type resolve phase */
   } reference;
+
+  struct {
+    TypedefHeader header;
+    char *name;
+    Typedef *type; /* will be null until after type resolve phase */
+  } list;
 };
 
 Tag tag_create(char *name, int id, Typedef *type);
 Typedef *choice_create(Array(Tag) choices);
 Typedef *sequence_create(Array(Tag) items);
 Typedef *type_create(char *name, Typedef *base);
+Typedef *list_create(char *name);
+
+extern Typedef boolean_type;
 
 #endif /* DEFS_H */

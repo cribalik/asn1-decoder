@@ -1,6 +1,11 @@
 #include "array.h"
 #include "defs.h"
 
+Typedef boolean_type;
+Typedef integer_type;
+Typedef octet_string_type;
+Typedef bit_string_type;
+
 Typedef *type_alloc(Typedef type) {
   Typedef *p = malloc(sizeof(*p));
   *p = type;
@@ -18,6 +23,13 @@ Typedef *choice_create(Array(Tag) choices) {
   Typedef r = {0};
   r.header.type = TYPE_CHOICE;
   r.choice.choices = choices;
+  return type_alloc(r);
+}
+
+Typedef *list_create(char *name) {
+  Typedef r = {0};
+  r.header.type = TYPE_LIST;
+  r.list.name = name;
   return type_alloc(r);
 }
 
@@ -50,8 +62,17 @@ int yywrap(void) {
 
 static Array(Typedef*) types;
 
+void builtin_types_init(void) {
+  boolean_type.header.type = TYPE_BOOLEAN;
+  boolean_type.header.type = TYPE_INTEGER;
+  boolean_type.header.type = TYPE_OCTET_STRING;
+  boolean_type.header.type = TYPE_BIT_STRING;
+}
+
 int main(void) {
   int i;
+
+  builtin_types_init();
 
 	yyparse();
   for (i = 0; i < array_len(types); ++i) {
@@ -64,7 +85,26 @@ int main(void) {
       case TYPE_SEQUENCE:
         printf("'%s' - SEQUENCE - #tags: %i\n", name, array_len(t->sequence.items)); 
         break;
-      default:
+      case TYPE_REFERENCE:
+        printf("'%s' - typedef of '%s'\n", name, t->reference.name);
+        break;
+      case TYPE_BOOLEAN:
+        printf("'%s' - BOOLEAN\n", name);
+        break;
+      case TYPE_ENUM:
+        printf("'%s' - ENUM\n", name);
+        break;
+      case TYPE_OCTET_STRING:
+        printf("'%s' - OCTET STRING\n", name);
+        break;
+      case TYPE_BIT_STRING:
+        printf("'%s' - BIT STRING\n", name);
+        break;
+      case TYPE_INTEGER:
+        printf("'%s' - INTEGER\n", name);
+        break;
+      case TYPE_LIST:
+        printf("'%s' - list of '%s'\n", name, t->list.name);
         break;
     }
   }

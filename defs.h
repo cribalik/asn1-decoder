@@ -60,11 +60,12 @@ union Typedef {
   } list;
 };
 
-Tag tag_create(char *name, int id, Typedef *type);
-Typedef *choice_create(Array(Tag) choices);
-Typedef *sequence_create(Array(Tag) items);
-Typedef *type_create(char *name, Typedef *base);
-Typedef *list_create(char *name);
+static Tag tag_create(char *name, int id, Typedef *type);
+static Typedef *choice_create(Array(Tag) choices);
+static Typedef *sequence_create(Array(Tag) items);
+static Typedef *type_create(char *name, Typedef *base);
+static Typedef *list_create(char *name);
+int parse(const char **filenames, int num_files, Typedef ***types_out, int *num_types_out);
 
 extern Typedef boolean_type;
 

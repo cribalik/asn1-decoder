@@ -8,7 +8,7 @@
 {
 	int number;
 	char *string;
-  Typedef* type;
+  ASN1_Type* type;
   Array(Tag) tags;
   Tag tag;
 }
@@ -34,58 +34,55 @@ definitions: | definitions definition ;
 definition:
 	NAME ASSIGNMENT type
   { 
-    if ($3) {
-      $3->header.name = $1;
-      array_push(types, $3);
-    }
+    array_push(types, asn1_typedef_create($3, $1));
   } |
 
 	NAME INTEGER ASSIGNMENT NUMBER ;
 
 type:
 	NAME
-  { $$ = typeref_create($1); } |
+  { $$ = asn1_typeref_create($1); array_push(type_references, $$); } |
 
 	NAME sizeinfo
-  { $$ = typeref_create($1); } |
+  { $$ = asn1_typeref_create($1); array_push(type_references, $$); } |
 
 	CHOICE '{' tags '}'
-  { $$ = choice_create((Array(Tag))$3); } |
+  { $$ = asn1_choice_create((Array(Tag))$3); } |
 
 	SEQUENCE '{' tags '}'
-  { $$ = sequence_create((Array(Tag))$3); } |
+  { $$ = asn1_sequence_create((Array(Tag))$3); } |
 
-	SEQUENCE sizeinfo OF NAME
-  { $$ = list_create($4); } |
-	SEQUENCE OF NAME
-  { $$ = list_create($3); } |
+	SEQUENCE sizeinfo OF type
+  { $$ = asn1_list_create($4); } |
+	SEQUENCE OF type
+  { $$ = asn1_list_create($3); } |
 
 	BOOLEAN
-  { $$ = &boolean_type; } |
+  { $$ = &asn1_boolean_type; } |
 
 	OCTET_STRING
-  { $$ = &octet_string_type; } |
+  { $$ = &asn1_octet_string_type; } |
 	OCTET_STRING sizeinfo
-  { $$ = &octet_string_type; } |
+  { $$ = &asn1_octet_string_type; } |
 
 	BIT_STRING
-  { $$ = &bit_string_type; } |
+  { $$ = &asn1_bit_string_type; } |
   BIT_STRING enumdecl
-  { $$ = &bit_string_type; } |
+  { $$ = &asn1_bit_string_type; } |
 	BIT_STRING enumdecl sizeinfo
-  { $$ = &bit_string_type; } |
+  { $$ = &asn1_bit_string_type; } |
 	BIT_STRING sizeinfo
-  { $$ = &bit_string_type; } |
+  { $$ = &asn1_bit_string_type; } |
 
 	INTEGER
-  { $$ = &integer_type; } |
+  { $$ = &asn1_integer_type; } |
 	INTEGER enumdecl
-  { $$ = &integer_type; } |
+  { $$ = &asn1_integer_type; } |
 	INTEGER range
-  { $$ = &integer_type; } |
+  { $$ = &asn1_integer_type; } |
 
 	ENUMERATED enumdecl
-  { $$ = &integer_type; } ;
+  { $$ = &asn1_integer_type; } ;
 
 tags:
 	tags ',' tag
@@ -96,10 +93,10 @@ tags:
 
 tag:
    NAME '[' NUMBER ']' type tagflags
-   { $$ = tag_create($1, $3, $5); } |
+   { $$ = asn1_tag_create($1, $3, $5); } |
 
    NAME type tagflags
-   { $$ = tag_create($1, 0, $2); } ;
+   { $$ = asn1_tag_create($1, 0, $2); } ;
 
 tagflags: | tagflags tagflag ;
 tagflag: OPTIONAL

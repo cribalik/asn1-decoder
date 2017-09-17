@@ -87,12 +87,12 @@ static Tag asn1_tag_create(char *name, int id, ASN1_Type *type) {
 }
 
 static void yyerror(const char *str) {
-	fprintf(stderr, "error %s:%i: %s\n", current_file, yylineno, str);
+  fprintf(stderr, "error %s:%i: %s\n", current_file, yylineno, str);
   exit(1);
 }
 
 static int yywrap(void) {
-	return 1;
+  return 1;
 }
 
 static void builtin_types_init(void) {

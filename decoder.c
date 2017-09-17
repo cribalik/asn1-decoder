@@ -11,37 +11,37 @@ static struct {
 } Global;
 
 typedef enum {
-	BER_TAG_EOC               = 0,
-	BER_TAG_BOOLEAN           = 1,
-	BER_TAG_INTEGER           = 2,
-	BER_TAG_BIT               = 3,
-	BER_TAG_OCTET             = 4,
-	BER_TAG_NULL              = 5,
-	BER_TAG_OBJECT_IDENTIFIER = 6,
-	BER_TAG_OBJECT_DESCRIPTOR = 7,
-	BER_TAG_EXTERNAL          = 8,
-	BER_TAG_REAL              = 9,
-	BER_TAG_ENUMERATED        = 10,
-	BER_TAG_EMBEDDED          = 11,
-	BER_TAG_UTF8STRING        = 12,
-	BER_TAG_RELATIVE_OID      = 13,
-	BER_TAG_Reserved_1        = 14,
-	BER_TAG_Reserved_2        = 15,
-	BER_TAG_SEQUENCE          = 16,
-	BER_TAG_SET               = 17,
-	BER_TAG_NUMERICsTRING     = 18,
-	BER_TAG_PRINTABLEsTRING   = 19,
-	BER_TAG_T61STRING         = 20,
-	BER_TAG_VIDEOTEXSTRING    = 21,
-	BER_TAG_IA5STRING         = 22,
-	BER_TAG_UTCTIME           = 23,
-	BER_TAG_GENERALIZEDTIME   = 24,
-	BER_TAG_GRAPHICsTRING     = 25,
-	BER_TAG_VISIBLESTRING     = 26,
-	BER_TAG_GENERALSTRING     = 27,
-	BER_TAG_UNIVERSALSTRING   = 28,
-	BER_TAG_CHARACTER         = 29,
-	BER_TAG_BMPSTRING         = 30
+  BER_TAG_EOC               = 0,
+  BER_TAG_BOOLEAN           = 1,
+  BER_TAG_INTEGER           = 2,
+  BER_TAG_BIT               = 3,
+  BER_TAG_OCTET             = 4,
+  BER_TAG_NULL              = 5,
+  BER_TAG_OBJECT_IDENTIFIER = 6,
+  BER_TAG_OBJECT_DESCRIPTOR = 7,
+  BER_TAG_EXTERNAL          = 8,
+  BER_TAG_REAL              = 9,
+  BER_TAG_ENUMERATED        = 10,
+  BER_TAG_EMBEDDED          = 11,
+  BER_TAG_UTF8STRING        = 12,
+  BER_TAG_RELATIVE_OID      = 13,
+  BER_TAG_Reserved_1        = 14,
+  BER_TAG_Reserved_2        = 15,
+  BER_TAG_SEQUENCE          = 16,
+  BER_TAG_SET               = 17,
+  BER_TAG_NUMERICsTRING     = 18,
+  BER_TAG_PRINTABLEsTRING   = 19,
+  BER_TAG_T61STRING         = 20,
+  BER_TAG_VIDEOTEXSTRING    = 21,
+  BER_TAG_IA5STRING         = 22,
+  BER_TAG_UTCTIME           = 23,
+  BER_TAG_GENERALIZEDTIME   = 24,
+  BER_TAG_GRAPHICsTRING     = 25,
+  BER_TAG_VISIBLESTRING     = 26,
+  BER_TAG_GENERALSTRING     = 27,
+  BER_TAG_UNIVERSALSTRING   = 28,
+  BER_TAG_CHARACTER         = 29,
+  BER_TAG_BMPSTRING         = 30
 } BerTag;
 
 typedef enum {
@@ -69,7 +69,7 @@ static int ber_tag_number_read(unsigned char c) {
   if ((c & 0x1f) != 0x1f)
     return c & 0x1f;
 
-	tag_number = 0;
+  tag_number = 0;
   for (;;) {
     c = next();
     tag_number <<= 7;

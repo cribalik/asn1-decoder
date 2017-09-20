@@ -58,12 +58,12 @@ union ASN1_Type {
   } reference;
 };
 
-static Tag asn1_tag_create(char *name, int id, ASN1_Type *type);
-static ASN1_Type *asn1_choice_create(Array(Tag) choices);
-static ASN1_Type *asn1_sequence_create(Array(Tag) items);
-static ASN1_Type *asn1_type_create(char *name, ASN1_Type *base);
-static ASN1_Type *asn1_list_create(ASN1_Type *type);
-static ASN1_Typedef *asn1_typedef_create(ASN1_Type *type, char *name);
+Tag asn1_tag_create(char *name, int id, ASN1_Type *type);
+ASN1_Type *asn1_choice_create(Array(Tag) choices);
+ASN1_Type *asn1_sequence_create(Array(Tag) items);
+ASN1_Type *asn1_type_create(char *name, ASN1_Type *base);
+ASN1_Type *asn1_list_create(ASN1_Type *type);
+ASN1_Typedef *asn1_typedef_create(ASN1_Type *type, char *name);
 int asn1_parse(const char **filenames, int num_files, ASN1_Typedef ***types_out, int *num_types_out);
 
 #endif /* DEFS_H */

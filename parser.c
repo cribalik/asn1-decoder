@@ -26,7 +26,7 @@ static ASN1_Type *type_alloc(ASN1_Type in) {
   return t;
 }
 
-static ASN1_Typedef *asn1_typedef_create(ASN1_Type *type, char *name) {
+ASN1_Typedef *asn1_typedef_create(ASN1_Type *type, char *name) {
   ASN1_Typedef *t;
   t = malloc(sizeof(*t));
   t->type = type;
@@ -34,7 +34,7 @@ static ASN1_Typedef *asn1_typedef_create(ASN1_Type *type, char *name) {
   return t;
 }
 
-static ASN1_Typedef *typedef_get_by_name(const char *name) {
+ASN1_Typedef *typedef_get_by_name(const char *name) {
   int i;
   ASN1_Typedef *result;
 
@@ -50,35 +50,35 @@ static ASN1_Typedef *typedef_get_by_name(const char *name) {
   return result;
 }
 
-static ASN1_Type *asn1_typeref_create(char *name) {
+ASN1_Type *asn1_typeref_create(char *name) {
   ASN1_Type t = {0};
   t.type = _TYPE_REFERENCE;
   t.reference.reference_name = name;
   return type_alloc(t);
 }
 
-static ASN1_Type *asn1_choice_create(Array(Tag) choices) {
+ASN1_Type *asn1_choice_create(Array(Tag) choices) {
   ASN1_Type t = {0};
   t.type = TYPE_CHOICE;
   t.choice.choices = choices;
   return type_alloc(t);
 }
 
-static ASN1_Type *asn1_list_create(ASN1_Type *type) {
+ASN1_Type *asn1_list_create(ASN1_Type *type) {
   ASN1_Type r = {0};
   r.type = TYPE_LIST;
   r.list.item_type = type;
   return type_alloc(r);
 }
 
-static ASN1_Type *asn1_sequence_create(Array(Tag) items) {
+ASN1_Type *asn1_sequence_create(Array(Tag) items) {
   ASN1_Type r = {0};
   r.type = TYPE_SEQUENCE;
   r.sequence.items = items;
   return type_alloc(r);
 }
 
-static Tag asn1_tag_create(char *name, int id, ASN1_Type *type) {
+Tag asn1_tag_create(char *name, int id, ASN1_Type *type) {
   Tag t = {0};
   t.name = name;
   t.id = id;
@@ -89,10 +89,6 @@ static Tag asn1_tag_create(char *name, int id, ASN1_Type *type) {
 static void yyerror(const char *str) {
   fprintf(stderr, "error %s:%i: %s\n", current_file, yylineno, str);
   exit(1);
-}
-
-static int yywrap(void) {
-  return 1;
 }
 
 static void builtin_types_init(void) {
@@ -128,7 +124,7 @@ static int asn1_resolve_reference_type(ASN1_Type *type) {
 }
 
 int asn1_parse(const char **filenames, int num_files, ASN1_Typedef ***types_out, int *num_types_out) {
-  int i = 0, err;
+  int i = 0;
   FILE *f;
 
   /* parse each file */

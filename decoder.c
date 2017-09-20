@@ -12,6 +12,7 @@
 #define BLUE "\x1B[34m"
 #define NORMAL "\x1B[39m"
 
+#define IS_UTF8_TRAIL(c) (((c)&0xC0) == 0x80)
 
 #if 0
 #define DEBUG(stmt) do {stmt;} while (0)
@@ -256,9 +257,7 @@ static void print_definition(ASN1_Type *t, int indent) {
 static void decode_type(BerIdentifier *ber_identifier_in, ASN1_Type *type, char *name, int indent) {
 #define ber_identifier_get() (ber_identifier_in ? *ber_identifier_in : ber_identifier_read())
 
-  int i;
   BerIdentifier ber_identifier;
-  int length;
 
   printf(TABS "%-20s ", TAB(indent), name);
   
@@ -283,7 +282,7 @@ static void decode_type(BerIdentifier *ber_identifier_in, ASN1_Type *type, char 
     } break;
 
     case TYPE_SEQUENCE: {
-      int i, length;
+      int i;
 
       printf(RED "SEQUENCE\n" NORMAL);
 
@@ -318,55 +317,55 @@ static void decode_type(BerIdentifier *ber_identifier_in, ASN1_Type *type, char 
 
     case TYPE_OCTET_STRING: {
       int len, i, printable;
-      long as_int;
-      unsigned char c;
       time_t t;
       struct tm *time;
-      unsigned char *begin;
+      unsigned char *data;
       char date[32];
 
       ber_identifier = ber_identifier_get();
       len = ber_length_read();
 
-      begin = Global.data;
+      data = Global.data;
 
+      /* at least print as hex */
       printf(BLUE "0x");
-      printable = 0;
-      for (i = 0, as_int = 0; i < len; ++i) {
-        c = next();
-        as_int <<= 8, as_int |= c;
-        printf("%x", c);
-        printable &= isprint(c);
-        if (i > 20) {
+      for (i = 0; i < len; ++i) {
+        if (i >= 20) {
           printf(NORMAL "...");
           break;
         }
+        printf("%.2x", data[i]);
       }
       printf(NORMAL);
 
-      /* is it printable ? */
+      /* is it printable as a string? */
+      printable = 1;
+      for (i = 0; i < len; ++i)
+          printable &= isprint(data[i]) || IS_UTF8_TRAIL(data[i]);
       if (printable) {
-        printf(" (" GREEN "%*.s" NORMAL ")", len, begin);
+        printf(" (" GREEN "\"%*.s\"" NORMAL ")", len, data);
         goto print_done;
       }
 
-      /* could it be a timestamp ? */
-      t = as_int/1000;
-      time = localtime(&t);
-      strftime(date, sizeof(date)-1, "%Y-%m-%d %H:%M:%S", time);
-      if (len <= 8 && time->tm_year > 90 && time->tm_year < 150) {
-        printf(" (" GREEN "%s" NORMAL ")", date);
-        goto print_done;
-      }
-
-      /* could it be an int ? */
+      /* convertable to int? */
       if (len <= 8) {
-        printf(" (" GREEN "%li" NORMAL ")", as_int);
-        goto print_done;
+        long val = 0;
+        for (i = 0; i < len; ++i)
+          val <<= 8, val |= data[i];
+
+        /* could it be a timestamp ? */
+        t = val/1000;
+        time = localtime(&t);
+        strftime(date, sizeof(date)-1, "%Y-%m-%d %H:%M:%S", time);
+        if (time->tm_year > 90 && time->tm_year < 150) {
+          printf(" (" GREEN "%s" NORMAL ")", date);
+          goto print_done;
+        }
       }
 
       print_done:
-      putchar('\n');
+      Global.data += len;
+      printf(NORMAL "\n");
     } break;
 
     default:
@@ -405,7 +404,6 @@ int main(int argc, const char **argv) {
 
   /* read file */
   Global.data_begin = Global.data = file_get_contents(argv[argc-2]);
-  Global.data_begin + array_len(Global.data_begin);
   if (!Global.data) {
     fprintf(stderr, "Failed to read contents of %s: %s\n", argv[argc-2], strerror(errno));
     exit(1);

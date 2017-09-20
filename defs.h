@@ -29,9 +29,9 @@ struct ASN1_Typedef {
 };
 
 struct Tag {
+  int id;
   char *name;
   ASN1_Type *type;
-  int id;
 };
 
 union ASN1_Type {

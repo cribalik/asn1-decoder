@@ -165,6 +165,7 @@ int asn1_parse(const char **filenames, int num_files, ASN1_Typedef ***types_out,
   }
 
   /* print the types */
+  #if 0
   for (i = 0; i < array_len(types); ++i) {
     ASN1_Type *t = types[i]->type;
     printf("%s => ", types[i]->name);
@@ -206,6 +207,7 @@ int asn1_parse(const char **filenames, int num_files, ASN1_Typedef ***types_out,
     }
     putchar('\n');
   }
+  #endif
 
   *types_out = types;
   *num_types_out = array_len(types);

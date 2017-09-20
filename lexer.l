@@ -27,7 +27,7 @@ IMPLICIT            return IMPLICIT;
 CHOICE              return CHOICE;
 SEQUENCE            return SEQUENCE;
 OF                  return OF;
-[A-Za-z_][A-Za-z_0-9-]*[A-Za-z]*  yylval.string = strdup(yytext); return NAME
+[A-Za-z_][A-Za-z_0-9-]*[A-Za-z]*  yylval.string = strdup(yytext); return NAME;
 ::=                 return ASSIGNMENT;
 \{                  return '{';
 \}                  return '}';
@@ -35,8 +35,8 @@ OF                  return OF;
 \]                  return ']';
 \(                  return '(';
 \)                  return ')';
-[0-9]+              yylval.number = atoi(yytext); return NUMBER;
+-?[0-9]+            yylval.number = atoi(yytext); return NUMBER;
 ,                   return ',';
---.*$               /* ignore comments */
-[ \t\n\r]+          /* ignore whitespace */
+--.*$               /* ignore comments */;
+[ \t\n\r]+          /* ignore whitespace */;
 %%

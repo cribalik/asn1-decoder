@@ -52,6 +52,9 @@
 /* Swaps in the last element */
 #define array_remove_fast(a, i) ((a) && array__n(a) > 0 ? (a)[i] = (a)[array__n(a)--],0 : 0)
 
+#define array_foreach(a, ptr) for ((ptr) = (a); (ptr) && (ptr) < (a)+array_len(a); ++(ptr))
+#define array_find(a, ptr, expr) {for ((ptr) = (a); (ptr) && (ptr) < (a)+array_len(a); ++(ptr)) {if (expr) break;} if ((ptr) == (a)+array_len(a)) {(ptr) = 0;}}
+
 /* Internals */
 #define array__c(a) ((int*)(a))[-1]
 #define array__n(a) ((int*)(a))[-2]

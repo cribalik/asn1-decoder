@@ -2,7 +2,7 @@
 #include "parser.c"
 %}
 
-%token ENUMERATED SIZE BIT_STRING BOOLEAN OCTET_STRING INTEGER DOUBLEDOT TRIPLEDOT TAGS BEGIN_ END_ DEFINITIONS IMPLICIT CHOICE SEQUENCE OF OPTIONAL NAME ASSIGNMENT NUMBER
+%token TOK_NULL ENUMERATED SIZE UTF8_STRING PRINTABLE_STRING IA5_STRING BIT_STRING BOOLEAN OCTET_STRING INTEGER DOUBLEDOT TRIPLEDOT TAGS BEGIN_ END_ DEFINITIONS IMPLICIT CHOICE SEQUENCE OF OPTIONAL NAME ASSIGNMENT NUMBER
 
 %union
 {
@@ -11,6 +11,7 @@
   ASN1_Type* type;
   Array(Tag) tags;
   Tag tag;
+  unsigned int flag;
 }
 
 %token <number> NUMBER
@@ -18,6 +19,8 @@
 %type <tags> tags
 %type <tag> tag
 %type <type> type
+%type <flag> tagflags
+%type <flag> tagflag
 
 %%
 commands: | commands command ;
@@ -57,6 +60,9 @@ type:
   SEQUENCE OF type
   { $$ = asn1_list_create($3); } |
 
+  TOK_NULL
+  { $$ = &asn1_null_type; } |
+
   BOOLEAN
   { $$ = &asn1_boolean_type; } |
 
@@ -81,6 +87,21 @@ type:
   INTEGER range
   { $$ = &asn1_integer_type; } |
 
+  UTF8_STRING
+  { $$ = &asn1_utf8_string_type; } |
+  UTF8_STRING sizeinfo
+  { $$ = &asn1_utf8_string_type; } |
+
+  IA5_STRING
+  { $$ = &asn1_ia5_string_type; } |
+  IA5_STRING sizeinfo
+  { $$ = &asn1_ia5_string_type; } |
+
+  PRINTABLE_STRING
+  { $$ = &asn1_printable_string_type; } |
+  PRINTABLE_STRING sizeinfo
+  { $$ = &asn1_printable_string_type; } |
+
   ENUMERATED enumdecl
   { $$ = &asn1_integer_type; } ;
 
@@ -89,17 +110,24 @@ tags:
   { array_push($$, $3); } |
 
   tag
-  { $$ = 0; array_push($$, $1); } ;
+  { Tag _tag = $1; $$ = 0; array_push($$, _tag); } ;
 
 tag:
    NAME '[' NUMBER ']' type tagflags
-   { $$ = asn1_tag_create($1, $3, $5); } |
+   { $$ = asn1_tag_create($1, $3, $5, $6); } |
 
    NAME type tagflags
-   { $$ = asn1_tag_create($1, 0, $2); } ;
+   { $$ = asn1_tag_create($1, TAG_NO_ID, $2, $3); } ;
 
-tagflags: | tagflags tagflag ;
-tagflag: OPTIONAL
+tagflags:
+    { $$ = 0; } |
+
+    tagflags tagflag
+    { $$ = $1 | $2; } ;
+
+tagflag:
+    OPTIONAL
+    { $$ = TAG_FLAG_OPTIONAL; }
 
 enumdecl: '{' enums '}'
 enums:

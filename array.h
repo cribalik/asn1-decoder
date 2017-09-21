@@ -42,6 +42,7 @@
 #define array_push_a(a, val, n) ((n) ? (array_resize(a, array_len(a)+(n)), memcpy((a)+array__n(a)-(n), val, (n) * sizeof(*(val)))) : 0)
 #define array_push_n(a, n) ((!(a) || array__n(a)+(n) >= array__c(a) ? (a)=array__grow(a, sizeof(*(a)), (n)) : 0), array__n(a) += (n))
 #define array_last(a) (!(a) ? 0 : (a)+array__n(a)-1)
+#define array_end(a) (!(a) ? 0 : (a)+array__n(a))
 #define array_free(a) (((a) ? ARRAY_FREE(&array__n(a)),0 : 0), (a) = 0)
 #define array_cap(a) ((a) ? array__c(a) : 0)
 #define array_resize(a, n) ((n) > array_len(a) ? array_push_n(a, (n) - array_len(a)) : ((a) ? (array__n(a) = (n)) : 0))

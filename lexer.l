@@ -10,6 +10,10 @@
 %option yylineno
 
 %%
+NULL                return TOK_NULL;
+PrintableString     return PRINTABLE_STRING;
+IA5String           return IA5_STRING;
+UTF8String          return UTF8_STRING;
 ENUMERATED          return ENUMERATED;
 SIZE                return SIZE;
 BOOLEAN             return BOOLEAN;

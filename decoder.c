@@ -1,8 +1,9 @@
 /* TODO:
- * Support integer enum specs
+ * AST for integer enum specs
+ * Support Bit string (with enum specs) and Enum
  * Support explicit tags
- * Support IA5String, Bit string and Enum
  */
+
 #include "defs.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -505,8 +506,8 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
         if (Global.data == end)
           break;
 
-        sprintf(item_name, "%i", i);
-        decode_type(type->list.item_type, item_name, 0, item_end, indent+1);
+        printf(TABS YELLOW "item #%i" NORMAL, TAB(indent+1), i);
+        decode_type(type->list.item_type, "", 0, item_end, indent+1);
       }
       if (Global.data != end)
         die("List should be %i long, but was at least %i\n", end-start, Global.data-start);
@@ -537,7 +538,8 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       printf(GREEN "%llu\n" NORMAL, i);
     } break;
 
-    case TYPE_OCTET_STRING: {
+    case TYPE_OCTET_STRING:
+    case TYPE_BIT_STRING: {
       int i, printable, len;
       time_t t;
       struct tm *time;
@@ -579,7 +581,7 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
         time = localtime(&t);
         if (time->tm_year > 90 && time->tm_year < 150) {
           strftime(date, sizeof(date)-1, "%Y-%m-%d %H:%M:%S", time);
-          sprintf(date+19, ",%llu", val % 1000);
+          sprintf(date+19, ".%llu", val % 1000);
           printf(MAGENTA "%s" NORMAL, date);
           goto print_done;
         }
@@ -590,6 +592,34 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
           goto print_done;
         }
 
+      }
+
+      /* could it be a numberstring? */
+      if (len <= 8) {
+        char number[32];
+        char *s = number;
+        for (i = 0; i < len; ++i) {
+          unsigned char lo,hi,c;
+
+          c = data[i];
+          lo = c & 0xf;
+          hi = (c & 0xf0) >> 4;
+
+          if (lo != 0xf && lo > 9)
+            goto skip_numberstring;
+          if (lo != 0xf)
+            *s++ = '0'+lo;
+
+          if (hi != 0xf && hi > 9)
+            goto skip_numberstring;
+          if (hi != 0xf)
+            *s++ = '0'+hi;
+        }
+        *s = 0;
+        printf(BLUE "%s\n" NORMAL, number);
+        goto print_done;
+
+        skip_numberstring:;
       }
 
       /* otherwise print as hex */
@@ -618,6 +648,7 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
     } break;
 
     case TYPE_PRINTABLE_STRING:
+    case TYPE_IA5_STRING:
     case TYPE_UTF8_STRING: {
       int len;
 

@@ -540,11 +540,16 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
 
     case TYPE_OCTET_STRING:
     case TYPE_BIT_STRING: {
+      /* This code is weird because almost everything we have at CICS is encoded as OCTET STRINGs;
+       * ip addresses, numberstrings, numbers, milliseconds etc,
+       * so we employ some heuristics on common cases to try to figure out what the value really is
+       */
       int i, printable, len;
       time_t t;
       struct tm *time;
       unsigned char *data;
       char date[32];
+
 
       printf(TABS NORMAL "%s " NORMAL, TAB(indent), name);
 
@@ -559,7 +564,6 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
         decode_type(xdr_type->type, xdr_type->name, 0, end, indent+1);
         break;
       }
-
 
       /* if it's small, it might be something special */
       if (len <= 8) {
@@ -582,7 +586,9 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
         if (time->tm_year > 90 && time->tm_year < 150) {
           strftime(date, sizeof(date)-1, "%Y-%m-%d %H:%M:%S", time);
           sprintf(date+19, ".%llu", val % 1000);
-          printf(MAGENTA "%s" NORMAL, date);
+          printf(GREEN "%s" NORMAL, date);
+
+          printf(" (" MAGENTA "%lli" NORMAL ")", val);
           goto print_done;
         }
 
@@ -591,12 +597,11 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
           printf(GREEN "%lli" NORMAL, val);
           goto print_done;
         }
-
       }
 
       /* could it be a numberstring? */
       if (len <= 8) {
-        char number[32];
+        char number[64];
         char *s = number;
         for (i = 0; i < len; ++i) {
           unsigned char lo,hi,c;
@@ -616,10 +621,19 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
             *s++ = '0'+hi;
         }
         *s = 0;
-        printf(BLUE "%s\n" NORMAL, number);
+        printf(MAGENTA "%s" NORMAL, number);
         goto print_done;
 
         skip_numberstring:;
+      }
+
+      /* is it printable as a string? */
+      printable = 1;
+      for (i = 0; i < len; ++i)
+          printable &= isprint(data[i]) || IS_UTF8_TRAIL(data[i]);
+      if (printable) {
+        printf(" (" CYAN "\"%.*s\"" NORMAL ")", len, data);
+        goto print_done;
       }
 
       /* otherwise print as hex */
@@ -632,15 +646,6 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
         printf("%.2x", data[i]);
       }
       printf(NORMAL);
-
-      /* is it printable as a string? */
-      printable = 1;
-      for (i = 0; i < len; ++i)
-          printable &= isprint(data[i]) || IS_UTF8_TRAIL(data[i]);
-      if (printable) {
-        printf(" (" CYAN "\"%.*s\"" NORMAL ")", len, data);
-        goto print_done;
-      }
 
       print_done:
       Global.data = end;
@@ -674,7 +679,7 @@ int main(int argc, const char **argv) {
   int i;
 
   if (argc < 4) {
-    printf("Usage: decoder ASN1FILE... FILE TYPENAME \n");
+    printf("Usage: decoder ASN1FILE... BINARY TYPENAME \n");
     exit(1);
   }
 

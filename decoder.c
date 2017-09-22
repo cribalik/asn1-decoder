@@ -12,16 +12,37 @@
 #include <time.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <inttypes.h>
+#include <stdint.h>
 
-#define RED "\x1B[31m"
-#define GREEN "\x1B[32m"
-#define YELLOW "\x1B[33m"
-#define BLUE "\x1B[34m"
-#define MAGENTA "\x1B[35m"
-#define CYAN "\x1B[36m"
-#define NORMAL "\x1B[39m"
+#if defined(_WIN32) || defined(_WIN64)
+/* windows */
+  #include <io.h>
+#else
+/* linux */
+  #include <unistd.h>
+#endif
 
-typedef unsigned long long u64;
+#define RED_STR "\x1B[31m"
+#define GREEN_STR "\x1B[32m"
+#define YELLOW_STR "\x1B[33m"
+#define BLUE_STR "\x1B[34m"
+#define MAGENTA_STR "\x1B[35m"
+#define CYAN_STR "\x1B[36m"
+#define NORMAL_STR "\x1B[39m"
+
+const char *RED = "";
+const char *GREEN = "";
+const char *YELLOW = "";
+const char *BLUE = "";
+const char *MAGENTA = "";
+const char *CYAN = "";
+const char *NORMAL = "";
+
+#define STATIC_ASSERT(expr, name) typedef char static_assert_##name[expr?1:-1]
+
+typedef uint64_t u64;
+STATIC_ASSERT(sizeof(u64) == 8, u64_is_64bit);
 
 #define IS_UTF8_TRAIL(c) (((c)&0xC0) == 0x80)
 #define isset(x, flag) ((x) & (flag))
@@ -39,7 +60,7 @@ static struct {
 } Global;
 
 int strstri(const char *needle, const char *haystack) {
-  int l1, l2, i,j;
+  int l1, l2, i;
   if (!haystack || !*haystack || !needle || !*needle)
     return 0;
 
@@ -115,9 +136,9 @@ typedef struct {
 } BerIdentifier;
 
 static void vprint_debug(const char *fmt, va_list args) {
-  printf(YELLOW "Debug: ");
+  printf("%sDebug: ", YELLOW);
   vprintf(fmt, args);
-  printf(NORMAL);
+  printf("%s", NORMAL);
 }
 
 static void print_debug(const char *fmt, ...) {
@@ -130,9 +151,9 @@ static void print_debug(const char *fmt, ...) {
 }
 
 static void vprint_error(const char *fmt, va_list args) {
-  printf(RED "\n\nError at byte %li: ", Global.data - Global.data_begin);
+  printf("\n\n%sError at byte %i: ", RED, (int)(Global.data - Global.data_begin));
   vprintf(fmt, args);
-  printf(NORMAL);
+  printf("%s", NORMAL);
 }
 
 static void print_error(const char *fmt, ...) {
@@ -150,13 +171,18 @@ static void die(const char *fmt, ...) {
   exit(1);
 }
 
-static void check_end() {
+static void check_if_past_end() {
   if (Global.data > array_last(Global.data_begin))
     die("Unexpected end of input stream\n");
 }
 
+static void check_end(unsigned char *end) {
+  if (end > array_end(Global.data_begin))
+    die("Went past end of data, exiting..\n");
+}
+
 static unsigned char next() {
-  check_end();
+  check_if_past_end();
   return *Global.data++;
 }
 
@@ -292,6 +318,15 @@ static void print_definition(ASN1_Type *t, int indent) {
   if (indent > 10)
     return;
   switch (t->type) {
+    case TYPE_NULL:
+      printf("NULL");
+      break;
+    case TYPE_IA5_STRING:
+      printf("IA5String");
+      break;
+    case TYPE_PRINTABLE_STRING:
+      printf("PrintableString");
+      break;
     case TYPE_UNKNOWN:
       printf("UNKNOWN");
       break;
@@ -373,6 +408,7 @@ static BerIdentifier get_identifier_of_type(ASN1_Type *t) {
   fail:
   print_error("Could not get identifier of type");
   print_definition(t, 0);
+  exit(1);
 }
 
 static Tag *ber_find_matching_tag(Tag *tags, int n, BerIdentifier ber_identifier) {
@@ -405,7 +441,7 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       Tag *tag;
       int len;
 
-      printf(TABS NORMAL "%s\n" NORMAL, TAB(indent), name);
+      printf(TABS "%s%s%s\n", TAB(indent), NORMAL, name, NORMAL);
 
       ber_identifier = bi ? *bi : ber_identifier_read();
       len = ber_length_read();
@@ -431,11 +467,10 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
 
     case TYPE_SEQUENCE: {
       Tag *tag, *next;
-      int len;
       unsigned char *item_end;
       int item_length, first = 1;
 
-      printf(TABS NORMAL "%s\n" NORMAL, TAB(indent), name);
+      printf(TABS "%s%s%s\n", TAB(indent), NORMAL, name, NORMAL);
 
       if (Global.data == end)
         break;
@@ -479,15 +514,14 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
 
       if (Global.data != end)
         die("Expected to read %i bytes from sequence, but it was of size %i\n", end-start, Global.data-start);
-      printf(NORMAL);
+      printf("%s", NORMAL);
     } break;
 
     case TYPE_LIST: {
-      char item_name[16];
       int i, item_length, first = 1;
       unsigned char *item_end;
 
-      printf(TABS NORMAL "%s\n" NORMAL, TAB(indent), name);
+      printf(TABS "%s%s%s\n", TAB(indent), NORMAL, name, NORMAL);
 
       if (Global.data == end)
         break;
@@ -506,7 +540,7 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
         if (Global.data == end)
           break;
 
-        printf(TABS YELLOW "item #%i" NORMAL, TAB(indent+1), i);
+        printf(TABS "%sitem #%i%s", TAB(indent+1), YELLOW, i, NORMAL);
         decode_type(type->list.item_type, "", 0, item_end, indent+1);
       }
       if (Global.data != end)
@@ -521,7 +555,7 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
 
       b = next();
 
-      printf(TABS NORMAL "%s " MAGENTA "%s\n" NORMAL, TAB(indent), name, b ? "TRUE" : "FALSE");
+      printf(TABS "%s%s %s%s%s\n", TAB(indent), NORMAL, name, MAGENTA, b ? "TRUE" : "FALSE", NORMAL);
     } break;
 
     case TYPE_INTEGER: {
@@ -529,13 +563,13 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       int len;
 
       /* TODO: handle enumdecls */
-      printf(TABS NORMAL "%s " NORMAL, TAB(indent), name);
+      printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
 
       len = end - Global.data;
 
       for (i = 0; len; --len)
         i <<= 8, i |= next();
-      printf(GREEN "%llu\n" NORMAL, i);
+      printf("%s%"PRIu64 "%s\n", GREEN, i, NORMAL);
     } break;
 
     case TYPE_OCTET_STRING:
@@ -548,12 +582,11 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       time_t t;
       struct tm *time;
       unsigned char *data;
-      char date[32];
 
-
-      printf(TABS NORMAL "%s " NORMAL, TAB(indent), name);
+      printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
 
       len = end - Global.data;
+
       data = Global.data;
 
       /* polystar special sauce */
@@ -576,25 +609,29 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
         if (len == 4 && (
             strstri("ipaddr", name) ||
             strstri("ip", name))) {
-          printf(CYAN "%llu.%llu.%llu.%llu" NORMAL, (val & 0xFF000000) >> 24, (val & 0xFF0000) >> 16, (val & 0xFF00) >> 8, val & 0xFF);
+          printf("%s%"PRIu64 ".%"PRIu64 ".%"PRIu64 ".%"PRIu64 "%s", CYAN, (val & 0xFF000000) >> 24, (val & 0xFF0000) >> 16, (val & 0xFF00) >> 8, val & 0xFF, NORMAL);
           goto print_done;
         }
 
         /* could it be a timestamp ? */
         t = val/1000;
         time = localtime(&t);
-        if (time->tm_year > 90 && time->tm_year < 150) {
-          strftime(date, sizeof(date)-1, "%Y-%m-%d %H:%M:%S", time);
-          sprintf(date+19, ".%llu", val % 1000);
-          printf(GREEN "%s" NORMAL, date);
+        if (time && time->tm_year > 90 && time->tm_year < 150) {
+          char date[32];
 
-          printf(" (" MAGENTA "%lli" NORMAL ")", val);
+          strftime(date, sizeof(date)-1, "%Y-%m-%d %H:%M:%S", time);
+
+          sprintf(date+19, ".%"PRIu64, val % 1000);
+
+          printf("%s%s%s", GREEN, date, NORMAL);
+
+          printf(" (%s%"PRIu64 "%s)", MAGENTA, val, NORMAL);
           goto print_done;
         }
 
         /* is it just a small readable value ? */
         if (val <= 1000000) {
-          printf(GREEN "%lli" NORMAL, val);
+          printf("%s%"PRIu64"%s", GREEN, val, NORMAL);
           goto print_done;
         }
       }
@@ -603,6 +640,7 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       if (len <= 8) {
         char number[64];
         char *s = number;
+
         for (i = 0; i < len; ++i) {
           unsigned char lo,hi,c;
 
@@ -621,35 +659,35 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
             *s++ = '0'+hi;
         }
         *s = 0;
-        printf(MAGENTA "%s" NORMAL, number);
         goto print_done;
 
         skip_numberstring:;
       }
+
 
       /* is it printable as a string? */
       printable = 1;
       for (i = 0; i < len; ++i)
           printable &= isprint(data[i]) || IS_UTF8_TRAIL(data[i]);
       if (printable) {
-        printf(" (" CYAN "\"%.*s\"" NORMAL ")", len, data);
+        printf(" (%s" "\"%.*s\"" "%s)", CYAN, len, data, NORMAL);
         goto print_done;
       }
 
       /* otherwise print as hex */
-      printf(BLUE "0x");
+      printf("%s0x", BLUE);
       for (i = 0; i < len; ++i) {
         if (i >= 20) {
-          printf(NORMAL "...");
+          printf("%s...", NORMAL);
           break;
         }
         printf("%.2x", data[i]);
       }
-      printf(NORMAL);
+      printf("%s", NORMAL);
 
       print_done:
       Global.data = end;
-      printf(NORMAL "\n");
+      printf("%s\n", NORMAL);
     } break;
 
     case TYPE_PRINTABLE_STRING:
@@ -657,11 +695,11 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
     case TYPE_UTF8_STRING: {
       int len;
 
-      printf(TABS NORMAL "%s " NORMAL, TAB(indent), name);
+      printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
 
       len = end - Global.data;
 
-      printf(CYAN "\"%.*s\"\n" NORMAL, len, Global.data);
+      printf("%s\"%.*s\"%s\n", CYAN, len, Global.data, NORMAL);
       Global.data = end;
     } break;
 
@@ -674,9 +712,30 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
   return Global.data - start;
 }
 
+static void init_colors() {
+  int is_a_terminal;
+
+#if defined(_WIN32) || defined(_WIN64)
+  is_a_terminal = _isatty(fileno(stdout));
+#else
+  is_a_terminal = isatty(fileno(stdout));
+#endif
+
+  if (is_a_terminal) {
+    RED = RED_STR;
+    GREEN = GREEN_STR;
+    YELLOW = YELLOW_STR;
+    BLUE = BLUE_STR;
+    MAGENTA = MAGENTA_STR;
+    CYAN = CYAN_STR;
+    NORMAL = NORMAL_STR;
+  }
+}
+
 int main(int argc, const char **argv) {
   ASN1_Typedef *start_type;
-  int i;
+
+  init_colors();
 
   if (argc < 4) {
     printf("Usage: decoder ASN1FILE... BINARY TYPENAME \n");

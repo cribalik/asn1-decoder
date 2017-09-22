@@ -79,4 +79,6 @@ ASN1_Type *asn1_list_create(ASN1_Type *type);
 ASN1_Typedef *asn1_typedef_create(ASN1_Type *type, char *name);
 Array(ASN1_Typedef) asn1_parse(const char **filenames, int num_files);
 
+int yywrap(void);
+
 #endif /* DEFS_H */

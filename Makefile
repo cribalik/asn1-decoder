@@ -1,7 +1,15 @@
-all:
+all: parser windows
+
+parser:
 	lex lexer.l
 	yacc -d parser.y
-	gcc -g lex.yy.c y.tab.c decoder.c -o decoder -ll
+
+linux:
+	gcc -Wall -Wno-unused-function -g lex.yy.c y.tab.c decoder.c -o decoder
 
 clean:
 	rm -f asn1 lex.yy.c y.output y.tab.c y.tab.h decoder
+
+windows: parser
+	i686-w64-mingw32-gcc -Wall -g -Wno-unused-function lex.yy.c y.tab.c decoder.c -o decoder.exe
+

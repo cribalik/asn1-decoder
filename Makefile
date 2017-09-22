@@ -1,4 +1,4 @@
-all: parser windows
+all: parser linux
 
 parser:
 	lex lexer.l

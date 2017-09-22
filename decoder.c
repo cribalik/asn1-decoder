@@ -588,7 +588,7 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
        */
       int i, printable, len;
       time_t t;
-      struct tm *time;
+      struct tm *tm_time;
       unsigned char *data;
 
       if (name)
@@ -624,11 +624,12 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
 
         /* could it be a timestamp ? */
         t = val/1000;
-        time = localtime(&t);
-        if (time && time->tm_year > 90 && time->tm_year < 150) {
+        /* 3 years old or 1 day in future is ok */
+        if (t < time(0) + 60*60*24 && t > time(0) - 60*60*24*365*3) {
           char date[32];
 
-          strftime(date, sizeof(date)-1, "%Y-%m-%d %H:%M:%S", time);
+          tm_time = localtime(&t);
+          strftime(date, sizeof(date)-1, "%Y-%m-%d %H:%M:%S", tm_time);
 
           sprintf(date+19, ".%"PRIu64, val % 1000);
 
@@ -668,6 +669,7 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
             *s++ = '0'+hi;
         }
         *s = 0;
+        printf("%s%s%s", MAGENTA, number, NORMAL);
         goto print_done;
 
         skip_numberstring:;

@@ -441,7 +441,8 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       Tag *tag;
       int len;
 
-      printf(TABS "%s%s%s\n", TAB(indent), NORMAL, name, NORMAL);
+      if (name)
+        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, name, NORMAL);
 
       ber_identifier = bi ? *bi : ber_identifier_read();
       len = ber_length_read();
@@ -470,7 +471,8 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       unsigned char *item_end;
       int item_length, first = 1;
 
-      printf(TABS "%s%s%s\n", TAB(indent), NORMAL, name, NORMAL);
+      if (name)
+        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, name, NORMAL);
 
       if (Global.data == end)
         break;
@@ -520,8 +522,10 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
     case TYPE_LIST: {
       int i, item_length, first = 1;
       unsigned char *item_end;
+      char item_name[32];
 
-      printf(TABS "%s%s%s\n", TAB(indent), NORMAL, name, NORMAL);
+      if (name)
+        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, name, NORMAL);
 
       if (Global.data == end)
         break;
@@ -540,8 +544,8 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
         if (Global.data == end)
           break;
 
-        printf(TABS "%sitem #%i%s", TAB(indent+1), YELLOW, i, NORMAL);
-        decode_type(type->list.item_type, "", 0, item_end, indent+1);
+        sprintf(item_name, "%sitem #%i%s", YELLOW, i, NORMAL);
+        decode_type(type->list.item_type, item_name, 0, item_end, indent+1);
       }
       if (Global.data != end)
         die("List should be %i long, but was at least %i\n", end-start, Global.data-start);
@@ -550,12 +554,15 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
     case TYPE_BOOLEAN: {
       int b;
 
+      if (name)
+        printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
+
       if (end - Global.data != 1)
         die("Length of boolean was not 1, but %i\n", end - Global.data);
 
       b = next();
 
-      printf(TABS "%s%s %s%s%s\n", TAB(indent), NORMAL, name, MAGENTA, b ? "TRUE" : "FALSE", NORMAL);
+      printf("%s%s%s\n", MAGENTA, b ? "TRUE" : "FALSE", NORMAL);
     } break;
 
     case TYPE_INTEGER: {
@@ -563,7 +570,8 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       int len;
 
       /* TODO: handle enumdecls */
-      printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
+      if (name)
+        printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
 
       len = end - Global.data;
 
@@ -583,7 +591,8 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       struct tm *time;
       unsigned char *data;
 
-      printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
+      if (name)
+        printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
 
       len = end - Global.data;
 
@@ -695,7 +704,8 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
     case TYPE_UTF8_STRING: {
       int len;
 
-      printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
+      if (name)
+        printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
 
       len = end - Global.data;
 

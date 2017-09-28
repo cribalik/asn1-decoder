@@ -639,11 +639,9 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
           goto print_done;
         }
 
-        /* is it just a small readable value ? */
-        if (val <= 1000000) {
-          printf("%s%"PRIu64"%s", GREEN, val, NORMAL);
-          goto print_done;
-        }
+        /* otherwise just print it as a number */
+        printf("%s%"PRIu64"%s", GREEN, val, NORMAL);
+        goto print_done;
       }
 
       /* could it be a numberstring? */
@@ -679,9 +677,10 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       /* is it printable as a string? */
       printable = 1;
       for (i = 0; i < len; ++i)
-          printable &= isprint(data[i]) || IS_UTF8_TRAIL(data[i]);
+          printable &= isprint(data[i]);
       if (printable) {
         printf(" (%s" "\"%.*s\"" "%s)", CYAN, len, data, NORMAL);
+        fprintf(stderr, "%s was printable", name);
         goto print_done;
       }
 

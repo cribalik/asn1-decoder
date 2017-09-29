@@ -964,6 +964,11 @@ static void run_interactive(ASN1_Typedef *start_type) {
         Global.current_object->data.integer.value = atol(Global.edit_buffer);/*strtoull(Global.edit_buffer, 0, 10);*/
         goto end_edit;
       }
+      else if (c == KEY_BACKSPACE) {
+        if (array_len(Global.edit_buffer) > 0)
+          --array_len_get(Global.edit_buffer);
+      }
+
       else if (isdigit(c))
         array_push(Global.edit_buffer, c);
       else

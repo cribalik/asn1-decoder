@@ -14,6 +14,7 @@
 #include <stdarg.h>
 #include <inttypes.h>
 #include <stdint.h>
+#include <ncurses.h>
 
 #if defined(_WIN32) || defined(_WIN64)
 /* windows */
@@ -43,6 +44,37 @@ const char *NORMAL = "";
 
 typedef uint64_t u64;
 STATIC_ASSERT(sizeof(u64) == 8, u64_is_64bit);
+
+typedef struct {
+  char *name;
+  ASN1_Type *type;
+} DataHeader;
+typedef union Object Object;
+union Object {
+  DataHeader header;
+
+  struct {
+    DataHeader header;
+    Object *value;
+  } choice;
+
+  struct {
+    DataHeader header;
+    Array(Object*) values;
+  } sequence;
+
+  /* IA5String, UTF8String, OCTET STRING */
+  struct {
+    DataHeader header;
+    int len;
+    unsigned char *value;
+  } string;
+
+  struct {
+    DataHeader header;
+    u64 value;
+  } integer;
+};
 
 #define IS_UTF8_TRAIL(c) (((c)&0xC0) == 0x80)
 #define isset(x, flag) ((x) & (flag))
@@ -430,9 +462,16 @@ static int ber_tag_is_implicit(Tag *tag) {
   return tag->id != TAG_NO_ID;
 }
 
-static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned char *end, int indent) {
+static ASN1_Typedef *get_type_by_name(const char *name);
+
+static Object* decode(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned char *end, int indent) {
+  Object *object;
   BerIdentifier ber_identifier;
   unsigned char *start;
+
+  object = malloc(sizeof(Object));
+  object->header.name = strdup(name);
+  object->header.type = type;
 
   start = Global.data;
 
@@ -440,9 +479,6 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
     case TYPE_CHOICE: {
       Tag *tag;
       int len;
-
-      if (name)
-        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, name, NORMAL);
 
       ber_identifier = bi ? *bi : ber_identifier_read();
       len = ber_length_read();
@@ -460,19 +496,19 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       if (ber_identifier.pc == BER_CONSTRUCTED)
         ber_identifier = ber_identifier_read();
 
-      decode_type(tag->type, tag->name,
-                  &ber_identifier,
-                  end,
-                  indent+1);
+      object->choice.value = decode(tag->type, tag->name,
+                                       &ber_identifier,
+                                       end,
+                                       indent+1);
     } break;
 
     case TYPE_SEQUENCE: {
       Tag *tag, *next;
       unsigned char *item_end;
       int item_length, first = 1;
+      Object *d;
 
-      if (name)
-        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, name, NORMAL);
+      object->sequence.values = 0;
 
       if (Global.data == end)
         break;
@@ -482,8 +518,6 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       next = type->sequence.items;
 
       for (; Global.data < end;) {
-        print_debug("%lli\n", end - Global.data);
-
         if (!first)
           ber_identifier = ber_identifier_read();
         first = 0;
@@ -511,21 +545,21 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
         }
         next = tag+1;
 
-        decode_type(tag->type, tag->name, ber_identifier.pc == BER_PRIMITIVE ? &ber_identifier : 0, item_end, indent+1);
+        d = decode(tag->type, tag->name, ber_identifier.pc == BER_PRIMITIVE ? &ber_identifier : 0, item_end, indent+1);
+        array_push(object->sequence.values, d);
       }
 
       if (Global.data != end)
         die("Expected to read %i bytes from sequence, but it was of size %i\n", end-start, Global.data-start);
-      printf("%s", NORMAL);
     } break;
 
     case TYPE_LIST: {
       int i, item_length, first = 1;
       unsigned char *item_end;
       char item_name[32];
+      Object *d;
 
-      if (name)
-        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, name, NORMAL);
+      object->sequence.values = 0;
 
       if (Global.data == end)
         break;
@@ -544,25 +578,20 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
         if (Global.data == end)
           break;
 
-        sprintf(item_name, "%sitem #%i%s", YELLOW, i, NORMAL);
-        decode_type(type->list.item_type, item_name, 0, item_end, indent+1);
+        sprintf(item_name, "item #%i", i);
+        d = decode(type->list.item_type, item_name, 0, item_end, indent+1);
+        array_push(object->sequence.values, d);
       }
+
       if (Global.data != end)
         die("List should be %i long, but was at least %i\n", end-start, Global.data-start);
     } break;
 
     case TYPE_BOOLEAN: {
-      int b;
-
-      if (name)
-        printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
-
       if (end - Global.data != 1)
         die("Length of boolean was not 1, but %i\n", end - Global.data);
 
-      b = next();
-
-      printf("%s%s%s\n", MAGENTA, b ? "TRUE" : "FALSE", NORMAL);
+      object->integer.value = next();
     } break;
 
     case TYPE_INTEGER: {
@@ -570,134 +599,37 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       int len;
 
       /* TODO: handle enumdecls */
-      if (name)
-        printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
 
       len = end - Global.data;
 
       for (i = 0; len; --len)
         i <<= 8, i |= next();
-      printf("%s%"PRIu64 "%s\n", GREEN, i, NORMAL);
+      object->integer.value = i;
     } break;
 
     case TYPE_OCTET_STRING:
     case TYPE_BIT_STRING: {
-      /* This code is weird because almost everything we have at CICS is encoded as OCTET STRINGs;
-       * ip addresses, numberstrings, numbers, milliseconds etc,
-       * so we employ some heuristics on common cases to try to figure out what the value really is
-       */
-      int i, printable, len;
-      time_t t;
-      struct tm *tm_time;
-      unsigned char *data;
-
-      if (name)
-        printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
+      int len;
 
       len = end - Global.data;
-
-      data = Global.data;
 
       /* polystar special sauce */
       if (strcmp(name, "cdrData") == 0) {
         ASN1_Typedef *xdr_type;
-        putchar('\n');
-        array_find(Global.types, xdr_type, strcmp(xdr_type->name, "XDR-TYPE") == 0);
-        decode_type(xdr_type->type, xdr_type->name, 0, end, indent+1);
-        break;
-      }
-
-      /* if it's small, it might be something special */
-      if (len <= 8) {
-        u64 val = 0;
-        for (i = 0; i < len; ++i)
-          val <<= 8, val |= data[i];
-
-        /* is it an ip address ? */
-        /* TODO: ipv6 */
-        if (len == 4 && (
-            strstri("ipaddr", name) ||
-            strstri("ip", name))) {
-          printf("%s%"PRIu64 ".%"PRIu64 ".%"PRIu64 ".%"PRIu64 "%s", CYAN, (val & 0xFF000000) >> 24, (val & 0xFF0000) >> 16, (val & 0xFF00) >> 8, val & 0xFF, NORMAL);
-          goto print_done;
-        }
-
-        /* could it be a timestamp ? */
-        t = val/1000;
-        /* 3 years old or 1 day in future is ok */
-        if (t < time(0) + 60*60*24 && t > time(0) - 60*60*24*365*3) {
-          char date[32];
-
-          tm_time = localtime(&t);
-          strftime(date, sizeof(date)-1, "%Y-%m-%d %H:%M:%S", tm_time);
-
-          sprintf(date+19, ".%"PRIu64, val % 1000);
-
-          printf("%s%s%s", GREEN, date, NORMAL);
-
-          printf(" (%s%"PRIu64 "%s)", MAGENTA, val, NORMAL);
-          goto print_done;
-        }
-
-        /* otherwise just print it as a number */
-        printf("%s%"PRIu64"%s", GREEN, val, NORMAL);
-        goto print_done;
-      }
-
-      /* could it be a numberstring? */
-      if (len <= 8) {
-        char number[64];
-        char *s = number;
-
-        for (i = 0; i < len; ++i) {
-          unsigned char lo,hi,c;
-
-          c = data[i];
-          lo = c & 0xf;
-          hi = (c & 0xf0) >> 4;
-
-          if (lo != 0xf && lo > 9)
-            goto skip_numberstring;
-          if (lo != 0xf)
-            *s++ = '0'+lo;
-
-          if (hi != 0xf && hi > 9)
-            goto skip_numberstring;
-          if (hi != 0xf)
-            *s++ = '0'+hi;
-        }
-        *s = 0;
-        printf("%s%s%s", MAGENTA, number, NORMAL);
-        goto print_done;
-
-        skip_numberstring:;
-      }
-
-
-      /* is it printable as a string? */
-      printable = 1;
-      for (i = 0; i < len; ++i)
-          printable &= isprint(data[i]);
-      if (printable) {
-        printf(" (%s" "\"%.*s\"" "%s)", CYAN, len, data, NORMAL);
-        fprintf(stderr, "%s was printable", name);
-        goto print_done;
-      }
-
-      /* otherwise print as hex */
-      printf("%s0x", BLUE);
-      for (i = 0; i < len; ++i) {
-        if (i >= 20) {
-          printf("%s...", NORMAL);
+        xdr_type = get_type_by_name("XDR-TYPE");
+        if (xdr_type) {
+          free(object);
+          object = decode(xdr_type->type, "cdrData", 0, end, indent+1);
           break;
         }
-        printf("%.2x", data[i]);
       }
-      printf("%s", NORMAL);
 
-      print_done:
+      /* copy the string just in case the raw data stops existing */
+      object->string.value = malloc(len);
+      object->string.len = len;
+      memcpy(object->string.value, Global.data, len);
+
       Global.data = end;
-      printf("%s\n", NORMAL);
     } break;
 
     case TYPE_PRINTABLE_STRING:
@@ -705,12 +637,11 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
     case TYPE_UTF8_STRING: {
       int len;
 
-      if (name)
-        printf(TABS "%s%s%s ", TAB(indent), NORMAL, name, NORMAL);
-
       len = end - Global.data;
+      object->string.value = malloc(len);
+      object->string.len = len;
+      memcpy(object->string.value, Global.data, len);
 
-      printf("%s\"%.*s\"%s\n", CYAN, len, Global.data, NORMAL);
       Global.data = end;
     } break;
 
@@ -720,7 +651,7 @@ static int decode_type(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned 
       exit(1);
   }
 
-  return Global.data - start;
+  return object;
 }
 
 static void init_colors() {
@@ -743,38 +674,516 @@ static void init_colors() {
   }
 }
 
-int main(int argc, const char **argv) {
-  ASN1_Typedef *start_type;
+static void print_usage() {
+  printf(
+    "Usage: decoder ASN1FILE... BINARY TYPENAME\n"
+    "\n"
+    "    --interactive  interactive mode\n"
+  );
+}
 
-  init_colors();
+static int is_option(const char *str) {
+  return str[0] == '-' && str[1] == '-';
+}
 
-  if (argc < 4) {
-    printf("Usage: decoder ASN1FILE... BINARY TYPENAME \n");
-    exit(1);
+static ASN1_Typedef *get_type_by_name(const char *name) {
+  ASN1_Typedef *t;
+  array_find(Global.types, t, strcmp(t->name, name) == 0);
+  return t;
+}
+
+#define MIN(a,b) ((b) < (a) ? (b) : (a))
+#define MAX(a,b) ((a) < (b) ? (b) : (a))
+
+static int type_is_primitive(ASN1_Type *type) {
+  switch (type->type) {
+    case TYPE_UNKNOWN:
+    case TYPE_NULL:
+    case TYPE_SEQUENCE:
+    case TYPE_CHOICE:
+    case TYPE_LIST:
+    case _TYPE_REFERENCE:
+      return 0;
+    case TYPE_BOOLEAN:
+    case TYPE_ENUM:
+    case TYPE_OCTET_STRING:
+    case TYPE_BIT_STRING:
+    case TYPE_UTF8_STRING:
+    case TYPE_IA5_STRING:
+    case TYPE_PRINTABLE_STRING:
+    case TYPE_INTEGER:
+      return 1;
   }
+  return 0;
+}
 
-  Global.types = asn1_parse(argv+1, argc-3);
-  if (!Global.types) {
-    die("Failed parsing\n");
-    exit(1);
+static int type_is_compound(ASN1_Type *type) {
+  switch (type->type) {
+    case TYPE_UNKNOWN:
+    case TYPE_NULL:
+    case _TYPE_REFERENCE:
+    case TYPE_BOOLEAN:
+    case TYPE_ENUM:
+    case TYPE_OCTET_STRING:
+    case TYPE_BIT_STRING:
+    case TYPE_UTF8_STRING:
+    case TYPE_IA5_STRING:
+    case TYPE_PRINTABLE_STRING:
+    case TYPE_INTEGER:
+      return 0;
+    case TYPE_SEQUENCE:
+    case TYPE_CHOICE:
+    case TYPE_LIST:
+      return 1;
   }
+  return 0;
+}
 
-  start_type = 0;
-  array_find(Global.types, start_type, strcmp(start_type->name, argv[argc-1]) == 0);
-  if (!start_type) {
-    die("Found no type '%s' in definition\n", argv[argc-1]);
-    exit(1);
-  }
+static void object_get_children(Object *parent, Object ***children, int *num_children) {
+  *children = 0;
+  *num_children = 0;
+  if (type_is_primitive(parent->header.type))
+    return;
 
-  /* read file */
-  Global.data_begin = Global.data = file_get_contents(argv[argc-2]);
-  if (!Global.data) {
-    die("Failed to read contents of %s: %s\n", argv[argc-2], strerror(errno));
-    exit(1);
-  }
+  switch (parent->header.type->type) {
+    case TYPE_CHOICE:
+      *children = &parent->choice.value;
+      *num_children = 1;
+      break;
+    case TYPE_SEQUENCE:
+    case TYPE_LIST:
+      *children = parent->sequence.values;
+      *num_children = array_len(parent->sequence.values);
+      break;
 
-  while (Global.data < array_end(Global.data_begin)) {
-    decode_type(start_type->type, start_type->name, 0, 0, 0);
+    default:
+      die("Unexpected error");
+      break;
   }
 }
 
+enum {
+  CURSES_GREEN = 1,
+  CURSES_BLUE
+};
+
+enum {
+  COLOR_IP = CURSES_BLUE,
+  COLOR_INT = CURSES_GREEN,
+  COLOR_TIME = CURSES_BLUE,
+  COLOR_STRING = COLOR_BLUE,
+  COLOR_BOOL = CURSES_BLUE,
+  COLOR_HEX = CURSES_GREEN
+};
+
+static void render_object(Object *object, int x, int y);
+static void render_tree(Object *object, int x, int *y);
+
+static void run_interactive(ASN1_Typedef *start_type) {
+  Object *o;
+  int y = 0;
+
+  initscr();
+  start_color();
+  init_pair(CURSES_GREEN, COLOR_GREEN, COLOR_BLACK);
+  init_pair(CURSES_BLUE, COLOR_BLUE, COLOR_BLACK);
+
+  o = decode(start_type->type, start_type->name, 0, 0, 0);
+  render_tree(o, 0, &y);
+  getch();
+}
+
+static void render_tree(Object *object, int x, int *y) {
+  Object **children;
+  int num_children, i;
+
+  render_object(object, x, *y);
+  ++*y;
+
+  object_get_children(object, &children, &num_children);
+  if (!num_children)
+    return;
+
+  for (i = 0; i < num_children; ++i)
+    render_tree(children[i], x + 2, y);
+}
+
+
+static u64 octet_to_int(Object *object) {
+  u64 val = 0;
+  int i;
+  for (i = 0; i < object->string.len; ++i)
+    val <<= 8, val |= object->string.value[i];
+  return val;
+}
+
+static int octet_is_ip_address(Object *object) {
+  /* TODO: ipv6 */
+  return object->string.len == 4 && (strstri("ipaddr", object->header.name) || strstri("ip", object->header.name));
+}
+
+static int octet_is_printable(Object *object) {
+  int i;
+  for (i = 0; i < object->string.len; ++i)
+    if (!isprint(object->string.value[i]))
+      return 0;
+  return 1;
+}
+
+static char* int_to_time(u64 val) {
+  static char date[32];
+  time_t t;
+  struct tm *tm_time;
+
+  t = val/1000;
+
+  /* 3 years old or 1 day in future is ok */
+  if (t >= time(0) + 60*60*24 || t <= time(0) - 60*60*24*365*3)
+    return 0;
+
+  tm_time = localtime(&t);
+  strftime(date, sizeof(date)-1, "%Y-%m-%d %H:%M:%S", tm_time);
+  sprintf(date+19, ".%"PRIu64, val % 1000);
+  return date;
+}
+
+static char* octet_to_numberstring(Object *object) {
+  static char number[64];
+  int i;
+  char *s = number;
+
+  if (object->string.len > 8)
+    return 0;
+
+  for (i = 0; i < object->string.len; ++i) {
+    unsigned char lo,hi,c;
+
+    c = object->string.value[i];
+    lo = c & 0xf;
+    hi = (c & 0xf0) >> 4;
+
+    if (lo != 0xf && lo > 9)
+      return 0;
+    if (lo != 0xf)
+      *s++ = '0'+lo;
+
+    if (hi != 0xf && hi > 9)
+      return 0;
+    if (hi != 0xf)
+      *s++ = '0'+hi;
+  }
+  *s = 0;
+
+  return number;
+}
+
+static void render_object(Object *object, int x, int y) {
+  /* WARNING: If you make changes here, remember to mirror the changes in dump_object_tree */
+  move(y, x);
+
+  printw("%s", object->header.name);
+
+  switch (object->header.type->type) {
+    case TYPE_CHOICE:
+    case TYPE_SEQUENCE:
+    case TYPE_LIST:
+      break;
+
+    case TYPE_BOOLEAN:
+      attron(COLOR_PAIR(COLOR_BOOL));
+      printw(object->integer.value ? " TRUE" : " FALSE");
+      attroff(COLOR_PAIR(COLOR_BOOL));
+      break;
+
+    case TYPE_INTEGER:
+      attron(COLOR_PAIR(COLOR_INT));
+      printw(" %"PRIu64, object->integer.value);
+      attroff(COLOR_PAIR(COLOR_INT));
+      break;
+
+    case TYPE_OCTET_STRING:
+    case TYPE_BIT_STRING: {
+      /* This code is weird because almost everything we have at CICS is encoded as OCTET STRINGs;
+       * ip addresses, numberstrings, numbers, milliseconds etc,
+       * so we employ some heuristics on common cases to try to figure out what the value really is
+       */
+      int i;
+      const char *str;
+
+      /* if it's small, it might be something special */
+      if (object->string.len <= 8) {
+        u64 val = octet_to_int(object);
+
+        /* is it an ip address ? */
+        if (octet_is_ip_address(object)) {
+          attron(COLOR_PAIR(COLOR_IP));
+          printw(" %"PRIu64 ".%"PRIu64 ".%"PRIu64 ".%"PRIu64, (val & 0xFF000000) >> 24, (val & 0xFF0000) >> 16, (val & 0xFF00) >> 8, val & 0xFF);
+          attroff(COLOR_PAIR(COLOR_IP));
+          break;
+        }
+
+        /* could it be a timestamp ? */
+        str = int_to_time(val);
+        if (str) {
+          attron(COLOR_PAIR(COLOR_TIME));
+          printw(" %s", str);
+          attroff(COLOR_PAIR(COLOR_TIME));
+
+          printw(" (");
+          attron(COLOR_PAIR(COLOR_INT));
+          printw("%"PRIu64, val);
+          attroff(COLOR_PAIR(COLOR_INT));
+          printw(")");
+          break;
+        }
+
+        /* otherwise just print it as a number */
+        attron(COLOR_PAIR(COLOR_INT));
+        printw(" %"PRIu64, val);
+        attroff(COLOR_PAIR(COLOR_INT));
+        break;
+      }
+
+      /* could it be a numberstring? */
+      str = octet_to_numberstring(object);
+      if (str) {
+        attron(COLOR_PAIR(COLOR_STRING));
+        printw(" %s", str);
+        attroff(COLOR_PAIR(COLOR_STRING));
+        break;
+      }
+
+      /* is it printable as a string? */
+      if (octet_is_printable(object)) {
+        printw(" \"%.*s\"", object->string.len, object->string.value);
+        break;
+      }
+
+      /* otherwise print as hex */
+      attron(COLOR_PAIR(COLOR_HEX));
+      printw(" 0x");
+      for (i = 0; i < object->string.len; ++i) {
+        if (i >= 20) {
+          attroff(COLOR_PAIR(COLOR_HEX));
+          printw("...");
+          break;
+        }
+        printw("%.2x", object->string.value[i]);
+      }
+      attroff(COLOR_PAIR(COLOR_HEX));
+
+    } break;
+
+    case TYPE_PRINTABLE_STRING:
+    case TYPE_IA5_STRING:
+    case TYPE_UTF8_STRING:
+      attron(COLOR_PAIR(COLOR_STRING));
+      printw(" \"%.*s\"", object->string.len, object->string.value);
+      attroff(COLOR_PAIR(COLOR_STRING));
+      break;
+
+    default:
+      print_error("Type not supported:\n");
+      print_definition(object->header.type, 0);
+      exit(1);
+  }
+}
+
+static void dump_object_tree(Object *object, int indent, int max_indent) {
+  Object **d;
+
+  switch (object->header.type->type) {
+    case TYPE_CHOICE:
+      if (object->header.name)
+        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, object->header.name, NORMAL);
+      if (!max_indent || indent+1 < max_indent)
+        dump_object_tree(object->choice.value, indent+1, max_indent);
+      break;
+    case TYPE_SEQUENCE:
+      if (object->header.name)
+        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, object->header.name, NORMAL);
+      if (!max_indent || indent+1 < max_indent)
+        array_foreach(object->sequence.values, d)
+          dump_object_tree(*d, indent+1, max_indent);
+      break;
+
+    case TYPE_LIST:
+      if (object->header.name)
+        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, object->header.name, NORMAL);
+      if (!max_indent || indent+1 < max_indent)
+        array_foreach(object->sequence.values, d)
+          dump_object_tree(*d, indent+1, max_indent);
+      break;
+
+    case TYPE_BOOLEAN:
+      if (object->header.name)
+        printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->header.name, NORMAL);
+      printf("%s%s%s\n", MAGENTA, object->integer.value ? "TRUE" : "FALSE", NORMAL);
+      break;
+
+    case TYPE_INTEGER:
+      if (object->header.name)
+        printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->header.name, NORMAL);
+      printf("%s%"PRIu64 "%s\n", GREEN, object->integer.value, NORMAL);
+      break;
+
+    case TYPE_OCTET_STRING:
+    case TYPE_BIT_STRING: {
+      /* This code is weird because almost everything we have at CICS is encoded as OCTET STRINGs;
+       * ip addresses, numberstrings, numbers, milliseconds etc,
+       * so we employ some heuristics on common cases to try to figure out what the value really is
+       */
+      int i;
+      const char *str;
+
+      if (object->header.name)
+        printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->header.name, NORMAL);
+
+      /* if it's small, it might be something special */
+      if (object->string.len <= 8) {
+        u64 val = octet_to_int(object);
+
+        if (octet_is_ip_address(object)) {
+          printf("%s%"PRIu64 ".%"PRIu64 ".%"PRIu64 ".%"PRIu64 "%s", CYAN, (val & 0xFF000000) >> 24, (val & 0xFF0000) >> 16, (val & 0xFF00) >> 8, val & 0xFF, NORMAL);
+          break;
+        }
+
+        /* could it be a timestamp ? */
+        str = int_to_time(val);
+        if (str) {
+          printf("%s%s%s", GREEN, str, NORMAL);
+          printf(" (%s%"PRIu64 "%s)", MAGENTA, val, NORMAL);
+          break;
+        }
+
+        /* otherwise just print it as a number */
+        printf("%s%"PRIu64"%s", GREEN, val, NORMAL);
+        break;
+      }
+
+      /* could it be a numberstring? */
+      str = octet_to_numberstring(object);
+      if (str) {
+        printf("%s%s%s", MAGENTA, str, NORMAL);
+        break;
+      }
+
+      /* is it printable as a string? */
+      if (octet_is_printable(object)) {
+        printf(" (%s" "\"%.*s\"" "%s)", CYAN, object->string.len, object->string.value, NORMAL);
+        break;
+      }
+
+      /* otherwise print as hex */
+      printf("%s0x", BLUE);
+      for (i = 0; i < object->string.len; ++i) {
+        if (i >= 20) {
+          printf("%s...", NORMAL);
+          break;
+        }
+        printf("%.2x", object->string.value[i]);
+      }
+      printf("%s", NORMAL);
+
+    } break;
+
+    case TYPE_PRINTABLE_STRING:
+    case TYPE_IA5_STRING:
+    case TYPE_UTF8_STRING:
+      if (object->header.name)
+        printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->header.name, NORMAL);
+      printf("%s\"%.*s\"%s\n", CYAN, object->string.len, object->string.value, NORMAL);
+      break;
+
+    default:
+      print_error("Type not supported:\n");
+      print_definition(object->header.type, 0);
+      exit(1);
+  }
+}
+
+static void dump_all(ASN1_Typedef *start_type) {
+  while (Global.data < array_end(Global.data_begin)) {
+    Object *o = decode(start_type->type, start_type->name, 0, 0, 0);
+    dump_object_tree(o, 0, 0);
+  }
+}
+
+int main(int argc, const char **argv) {
+  ASN1_Typedef *start_type;
+  const char **input_files;
+  const char *binary_file;
+  const char *type_name;
+  int num_input_files;
+  int interactive = 0;
+  int num_opts = 0;
+  int i;
+
+  init_colors();
+
+  /* skip the first arg.. */
+  --argc, ++argv;
+
+  if (argc == 0)
+    print_usage(), exit(1);
+
+  for (i = 0; i < argc; ++i) {
+    if (is_option(argv[i])) {
+      if (strcmp(argv[i], "--interactive") == 0)
+        interactive = 1;
+      else {
+        printf("Unknown option \"%s\"\n", argv[i]+2);
+        print_usage(), exit(1);
+      }
+      ++num_opts;
+    }
+  }
+
+  if (argc - num_opts < 3)
+    print_usage(), exit(1);
+
+  /* get our args */
+  i = 0;
+  /* input files */
+  input_files = malloc(sizeof(*input_files) * (argc - num_opts - 2));
+  for (num_input_files = 0; num_input_files < (argc - num_opts - 2); ++i)
+    if (!is_option(argv[i]))
+      input_files[num_input_files++] = argv[i];
+
+  /* binary */
+  for (; i < argc; ++i) {
+    if (!is_option(argv[i])) {
+      binary_file = argv[i++];
+      break;
+    }
+  }
+
+  /* type name */
+  for (; i < argc; ++i) {
+    if (!is_option(argv[i])) {
+      type_name = argv[i++];
+      break;
+    }
+  }
+
+  Global.types = asn1_parse(input_files, num_input_files);
+  if (!Global.types)
+    die("Failed parsing\n");
+
+  start_type = get_type_by_name(type_name);
+  if (!start_type)
+    die("Found no type '%s' in definition\n", type_name);
+
+  /* read file */
+
+  Global.data_begin = Global.data = file_get_contents(binary_file);
+  if (!Global.data)
+    die("Failed to read contents of %s: %s\n", binary_file, strerror(errno));
+
+
+  /* interactive mode ? */
+  if (interactive)
+    run_interactive(start_type);
+  else
+    dump_all(start_type);
+}

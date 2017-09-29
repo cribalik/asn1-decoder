@@ -1,5 +1,6 @@
 /* TODO:
- * AST for integer enum specs
+ * Improve tree rendering, don't
+ * Support object editing
  * Support Bit string (with enum specs) and Enum
  * Support explicit tags
  */
@@ -15,6 +16,7 @@
 #include <inttypes.h>
 #include <stdint.h>
 #include <ncurses.h>
+#include <assert.h>
 
 #if defined(_WIN32) || defined(_WIN64)
 /* windows */
@@ -45,35 +47,35 @@ const char *NORMAL = "";
 typedef uint64_t u64;
 STATIC_ASSERT(sizeof(u64) == 8, u64_is_64bit);
 
-typedef struct {
+typedef struct Object Object;
+struct Object {
+
+  /* asn1 data */
+  Object *parent;
   char *name;
   ASN1_Type *type;
-} DataHeader;
-typedef union Object Object;
-union Object {
-  DataHeader header;
+  union {
+    struct {
+      Object *value;
+    } choice;
 
-  struct {
-    DataHeader header;
-    Object *value;
-  } choice;
+    struct {
+      Array(Object*) values;
+    } sequence;
 
-  struct {
-    DataHeader header;
-    Array(Object*) values;
-  } sequence;
+    /* IA5String, UTF8String, OCTET STRING */
+    struct {
+      int len;
+      unsigned char *value;
+    } string;
 
-  /* IA5String, UTF8String, OCTET STRING */
-  struct {
-    DataHeader header;
-    int len;
-    unsigned char *value;
-  } string;
+    struct {
+      u64 value;
+    } integer;
+  } data;
 
-  struct {
-    DataHeader header;
-    u64 value;
-  } integer;
+  /* rendering data */
+  char collapsed;
 };
 
 #define IS_UTF8_TRAIL(c) (((c)&0xC0) == 0x80)
@@ -89,6 +91,7 @@ static struct {
   Array(unsigned char) data_begin;
   unsigned char *data;
   Array(ASN1_Typedef) types;
+  Object *current_object;
 } Global;
 
 int strstri(const char *needle, const char *haystack) {
@@ -470,8 +473,10 @@ static Object* decode(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned c
   unsigned char *start;
 
   object = malloc(sizeof(Object));
-  object->header.name = strdup(name);
-  object->header.type = type;
+  memset(object, 0, sizeof(*object));
+  object->name = strdup(name);
+  object->type = type;
+  object->parent = 0;
 
   start = Global.data;
 
@@ -496,10 +501,11 @@ static Object* decode(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned c
       if (ber_identifier.pc == BER_CONSTRUCTED)
         ber_identifier = ber_identifier_read();
 
-      object->choice.value = decode(tag->type, tag->name,
+      object->data.choice.value = decode(tag->type, tag->name,
                                        &ber_identifier,
                                        end,
                                        indent+1);
+      object->data.choice.value->parent = object;
     } break;
 
     case TYPE_SEQUENCE: {
@@ -508,7 +514,7 @@ static Object* decode(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned c
       int item_length, first = 1;
       Object *d;
 
-      object->sequence.values = 0;
+      object->data.sequence.values = 0;
 
       if (Global.data == end)
         break;
@@ -546,7 +552,8 @@ static Object* decode(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned c
         next = tag+1;
 
         d = decode(tag->type, tag->name, ber_identifier.pc == BER_PRIMITIVE ? &ber_identifier : 0, item_end, indent+1);
-        array_push(object->sequence.values, d);
+        d->parent = object;
+        array_push(object->data.sequence.values, d);
       }
 
       if (Global.data != end)
@@ -559,7 +566,7 @@ static Object* decode(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned c
       char item_name[32];
       Object *d;
 
-      object->sequence.values = 0;
+      object->data.sequence.values = 0;
 
       if (Global.data == end)
         break;
@@ -580,7 +587,8 @@ static Object* decode(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned c
 
         sprintf(item_name, "item #%i", i);
         d = decode(type->list.item_type, item_name, 0, item_end, indent+1);
-        array_push(object->sequence.values, d);
+        d->parent = object;
+        array_push(object->data.sequence.values, d);
       }
 
       if (Global.data != end)
@@ -591,7 +599,7 @@ static Object* decode(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned c
       if (end - Global.data != 1)
         die("Length of boolean was not 1, but %i\n", end - Global.data);
 
-      object->integer.value = next();
+      object->data.integer.value = next();
     } break;
 
     case TYPE_INTEGER: {
@@ -604,7 +612,7 @@ static Object* decode(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned c
 
       for (i = 0; len; --len)
         i <<= 8, i |= next();
-      object->integer.value = i;
+      object->data.integer.value = i;
     } break;
 
     case TYPE_OCTET_STRING:
@@ -625,9 +633,9 @@ static Object* decode(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned c
       }
 
       /* copy the string just in case the raw data stops existing */
-      object->string.value = malloc(len);
-      object->string.len = len;
-      memcpy(object->string.value, Global.data, len);
+      object->data.string.value = malloc(len);
+      object->data.string.len = len;
+      memcpy(object->data.string.value, Global.data, len);
 
       Global.data = end;
     } break;
@@ -638,9 +646,9 @@ static Object* decode(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned c
       int len;
 
       len = end - Global.data;
-      object->string.value = malloc(len);
-      object->string.len = len;
-      memcpy(object->string.value, Global.data, len);
+      object->data.string.value = malloc(len);
+      object->data.string.len = len;
+      memcpy(object->data.string.value, Global.data, len);
 
       Global.data = end;
     } break;
@@ -742,18 +750,18 @@ static int type_is_compound(ASN1_Type *type) {
 static void object_get_children(Object *parent, Object ***children, int *num_children) {
   *children = 0;
   *num_children = 0;
-  if (type_is_primitive(parent->header.type))
+  if (type_is_primitive(parent->type))
     return;
 
-  switch (parent->header.type->type) {
+  switch (parent->type->type) {
     case TYPE_CHOICE:
-      *children = &parent->choice.value;
+      *children = &parent->data.choice.value;
       *num_children = 1;
       break;
     case TYPE_SEQUENCE:
     case TYPE_LIST:
-      *children = parent->sequence.values;
-      *num_children = array_len(parent->sequence.values);
+      *children = parent->data.sequence.values;
+      *num_children = array_len(parent->data.sequence.values);
       break;
 
     default:
@@ -762,70 +770,299 @@ static void object_get_children(Object *parent, Object ***children, int *num_chi
   }
 }
 
+static void object_get_siblings(Object *obj, Object ***siblings, int *num_siblings) {
+  *siblings = 0;
+  *num_siblings = 0;
+  if (!obj->parent)
+    return;
+  object_get_children(obj->parent, siblings, num_siblings);
+}
+
 enum {
   CURSES_GREEN = 1,
-  CURSES_BLUE
+  CURSES_BLUE = 2,
+  CURSES_YELLOW = 3,
+  CURSES_INV = 4
 };
 
 enum {
-  COLOR_IP = CURSES_BLUE,
-  COLOR_INT = CURSES_GREEN,
-  COLOR_TIME = CURSES_BLUE,
-  COLOR_STRING = COLOR_BLUE,
-  COLOR_BOOL = CURSES_BLUE,
-  COLOR_HEX = CURSES_GREEN
+  COLOR_FOR_IP = CURSES_BLUE,
+  COLOR_FOR_INT = CURSES_GREEN,
+  COLOR_FOR_TIME = CURSES_BLUE,
+  COLOR_FOR_STRING = CURSES_BLUE,
+  COLOR_FOR_BOOL = CURSES_BLUE,
+  COLOR_FOR_HEX = CURSES_GREEN,
+  COLOR_FOR_SELECTED = CURSES_INV,
+  COLOR_FOR_STATUSBAR = CURSES_INV
 };
 
-static void render_object(Object *object, int x, int y);
-static void render_tree(Object *object, int x, int *y);
+static void render_object(WINDOW *window, Object *object, int x, int x_max, int y);
+static int render_tree(WINDOW *window, Object *object, int x, int x_max, int *y, int y_max, int *current_object_y);
 
+static void print_help(WINDOW* window) {
+  int y = 2;
+  int w = getmaxx(window);
+
+  erase();
+  mvwprintw(window, y++, w/2 - 9, "##################");
+  mvwprintw(window, y++, w/2 - 9, "#                #");
+  mvwprintw(window, y++, w/2 - 9, "#      HELP      #");
+  mvwprintw(window, y++, w/2 - 9, "#                #");
+  mvwprintw(window, y++, w/2 - 9, "##################");
+  y += 2;
+  mvwprintw(window, y++, w/6, "q  quit");
+  mvwprintw(window, y++, w/6, "?  help");
+  mvwprintw(window, y++, w/6, "=  collapse all siblings");
+}
+
+static void render_status_bar(WINDOW *statusw) {
+  mvwprintw(statusw, 0, 0, "  ?: help   q: quit");
+}
+
+typedef enum {
+  MODE_NORMAL,
+  MODE_HELP
+} Mode;
 static void run_interactive(ASN1_Typedef *start_type) {
-  Object *o;
-  int y = 0;
+  Object *root;
+  Mode mode = MODE_NORMAL;
+  WINDOW *objw, *statusw;
+  int width, height;
 
   initscr();
+  curs_set(0);
   start_color();
   init_pair(CURSES_GREEN, COLOR_GREEN, COLOR_BLACK);
   init_pair(CURSES_BLUE, COLOR_BLUE, COLOR_BLACK);
+  init_pair(CURSES_YELLOW, COLOR_YELLOW, COLOR_BLACK);
+  init_pair(CURSES_INV, COLOR_BLACK, COLOR_WHITE);
+  getmaxyx(stdscr, height, width);
 
-  o = decode(start_type->type, start_type->name, 0, 0, 0);
-  render_tree(o, 0, &y);
-  getch();
+  objw = newwin(height-1, width, 0, 0);
+  keypad(objw, 1);
+  scrollok(objw, 1);
+
+  statusw = newwin(1, width, height-1, 0);
+  wcolor_set(statusw, COLOR_FOR_STATUSBAR, 0);
+  wbkgdset(statusw, COLOR_PAIR(COLOR_FOR_STATUSBAR));
+
+  root = Global.current_object = decode(start_type->type, start_type->name, 0, 0, 0);
+  for (;;) {
+    int c, y, y_max, x_max, current_object_y, w,h;
+
+    getmaxyx(stdscr, h, w);
+    if (w != width || h != height) {
+      wresize(objw, h-1, w);
+      mvwin(objw, 0, 0);
+      wresize(statusw, 1, w);
+      mvwin(statusw, h-1, 0);
+      width = w, height = h;
+    }
+
+    getmaxyx(objw, y_max, x_max);
+    y = 0;
+    current_object_y = -1;
+    werase(objw);
+    werase(statusw);
+    switch (mode) {
+    case MODE_NORMAL:
+      render_tree(objw, root, 0, x_max, &y, y_max, &current_object_y);
+      render_status_bar(statusw);
+      break;
+    case MODE_HELP:
+      print_help(objw);
+      break;
+    }
+    wrefresh(objw);
+    wrefresh(statusw);
+
+    c = wgetch(objw);
+    switch (mode) {
+    case MODE_HELP:
+      mode = MODE_NORMAL;
+      break;
+    case MODE_NORMAL:
+      switch (c) {
+      case 'q':
+        goto done;
+
+      case '?':
+        mode = MODE_HELP;
+        break;
+
+      case '=': {
+        Object **siblings;
+        int num_siblings;
+        int i;
+
+        object_get_siblings(Global.current_object, &siblings, &num_siblings);
+        if (!siblings)
+          break;
+        for (i = 0; i < num_siblings; ++i)
+          if (type_is_compound(siblings[i]->type))
+            siblings[i]->collapsed = 1;
+      } break;
+
+      case 'h':
+      case KEY_LEFT: {
+        /* if already collapsed, collaps parent */
+        if ((type_is_primitive(Global.current_object->type) || Global.current_object->collapsed) && Global.current_object->parent)
+          Global.current_object = Global.current_object->parent;
+        else
+          Global.current_object->collapsed = 1;
+      } break;
+
+      case 'l':
+      case KEY_RIGHT:
+        Global.current_object->collapsed = 0;
+        break;
+
+      case 'k':
+      case KEY_UP: {
+        int i;
+        Object **siblings, **children;
+        int num_siblings, num_children;
+
+        object_get_siblings(Global.current_object, &siblings, &num_siblings);
+        if (!siblings)
+          goto jump_to_parent;
+
+        for (i = 0; i < num_siblings; ++i)
+          if (siblings[i] == Global.current_object)
+            break;
+        assert(i != num_siblings);
+
+        if (i == 0)
+          goto jump_to_parent;
+
+        /* we go to sibling, and then continue down as far as possible */
+        Global.current_object = siblings[i-1];
+        while (!Global.current_object->collapsed && (object_get_children(Global.current_object, &children, &num_children), children))
+          Global.current_object = children[num_children-1];
+        break;
+
+        jump_to_parent:
+        if (Global.current_object->parent)
+          Global.current_object = Global.current_object->parent;
+      } break;
+
+      case 'j':
+      case KEY_DOWN: {
+        Object **children;
+        int num_children;
+
+        object_get_children(Global.current_object, &children, &num_children);
+
+        if (!Global.current_object->collapsed && children) {
+          Global.current_object = children[0];
+          break;
+        }
+        else {
+          Object **siblings;
+          int num_siblings;
+          Object *next;
+
+          next = Global.current_object;
+
+          for (;;) {
+            /* find the next sibling */
+            int i;
+
+            object_get_siblings(next, &siblings, &num_siblings);
+            if (!siblings)
+              goto dont_move;
+
+            for (i = 0; i < num_siblings; ++i)
+              if (siblings[i] == next)
+                break;
+            assert(i != num_siblings);
+
+            if (i+1 >= num_siblings) {
+              /* if last sibling, go to parents sibling */
+              if (!next->parent)
+                break;
+              next = next->parent;
+              continue;
+            }
+
+            next = siblings[i+1];
+            break;
+          }
+
+          Global.current_object = next;
+          dont_move:;
+        }
+      } break;
+
+      default:
+        break;
+      }
+      break;
+    }
+    
+  }
+  done:
+  endwin();
 }
 
-static void render_tree(Object *object, int x, int *y) {
+static int render_tree(WINDOW* window, Object *object, int x, int x_max, int *y, int y_max, int *current_object_y) {
   Object **children;
   int num_children, i;
+  int wy;
 
-  render_object(object, x, *y);
-  ++*y;
+  wy = MIN(*y, y_max-1);
+
+  /* have we gone at least half a screen past the selected object? */
+  if (*y >= y_max && *current_object_y != -1 && *y - *current_object_y > y_max/2)
+    return 1;
+
+  /* if we're not done, scroll down one and keep going */
+  if (*y >= y_max)
+    wscrl(window, 1);
+
+  wmove(window, wy, 0);
+  wclrtoeol(window);
+
+  if (type_is_compound(object->type))
+    mvwprintw(window, wy, x, object->collapsed ? "+" : "-");
+
+  if (object == Global.current_object)
+    *current_object_y = *y;
+  render_object(window, object, x+2, x_max, wy);
+
+  ++(*y);
+
+  if (object->collapsed)
+    return 0;
 
   object_get_children(object, &children, &num_children);
   if (!num_children)
-    return;
+    return 0;
 
   for (i = 0; i < num_children; ++i)
-    render_tree(children[i], x + 2, y);
+    if (render_tree(window, children[i], x + 2, x_max, y, y_max, current_object_y))
+      return 1;
+  return 0;
 }
 
 
 static u64 octet_to_int(Object *object) {
   u64 val = 0;
   int i;
-  for (i = 0; i < object->string.len; ++i)
-    val <<= 8, val |= object->string.value[i];
+  for (i = 0; i < object->data.string.len; ++i)
+    val <<= 8, val |= object->data.string.value[i];
   return val;
 }
 
 static int octet_is_ip_address(Object *object) {
   /* TODO: ipv6 */
-  return object->string.len == 4 && (strstri("ipaddr", object->header.name) || strstri("ip", object->header.name));
+  return object->data.string.len == 4 && (strstri("ipaddr", object->name) || strstri("ip", object->name));
 }
 
 static int octet_is_printable(Object *object) {
   int i;
-  for (i = 0; i < object->string.len; ++i)
-    if (!isprint(object->string.value[i]))
+  for (i = 0; i < object->data.string.len; ++i)
+    if (!isprint(object->data.string.value[i]))
       return 0;
   return 1;
 }
@@ -852,13 +1089,13 @@ static char* octet_to_numberstring(Object *object) {
   int i;
   char *s = number;
 
-  if (object->string.len > 8)
+  if (object->data.string.len > 8)
     return 0;
 
-  for (i = 0; i < object->string.len; ++i) {
+  for (i = 0; i < object->data.string.len; ++i) {
     unsigned char lo,hi,c;
 
-    c = object->string.value[i];
+    c = object->data.string.value[i];
     lo = c & 0xf;
     hi = (c & 0xf0) >> 4;
 
@@ -877,28 +1114,32 @@ static char* octet_to_numberstring(Object *object) {
   return number;
 }
 
-static void render_object(Object *object, int x, int y) {
+static void render_object(WINDOW *window, Object *object, int x, int x_max, int y) {
   /* WARNING: If you make changes here, remember to mirror the changes in dump_object_tree */
-  move(y, x);
+  wmove(window, y, x);
 
-  printw("%s", object->header.name);
+  if (object == Global.current_object)
+    wattron(window, COLOR_PAIR(COLOR_FOR_SELECTED));
+  wprintw(window, "%s", object->name);
+  if (object == Global.current_object)
+    wattroff(window, COLOR_PAIR(COLOR_FOR_SELECTED));
 
-  switch (object->header.type->type) {
+  switch (object->type->type) {
     case TYPE_CHOICE:
     case TYPE_SEQUENCE:
     case TYPE_LIST:
       break;
 
     case TYPE_BOOLEAN:
-      attron(COLOR_PAIR(COLOR_BOOL));
-      printw(object->integer.value ? " TRUE" : " FALSE");
-      attroff(COLOR_PAIR(COLOR_BOOL));
+      wattron(window, COLOR_PAIR(COLOR_FOR_BOOL));
+      wprintw(window, object->data.integer.value ? " TRUE" : " FALSE");
+      wattroff(window, COLOR_PAIR(COLOR_FOR_BOOL));
       break;
 
     case TYPE_INTEGER:
-      attron(COLOR_PAIR(COLOR_INT));
-      printw(" %"PRIu64, object->integer.value);
-      attroff(COLOR_PAIR(COLOR_INT));
+      wattron(window, COLOR_PAIR(COLOR_FOR_INT));
+      wprintw(window, " %"PRIu64, object->data.integer.value);
+      wattroff(window, COLOR_PAIR(COLOR_FOR_INT));
       break;
 
     case TYPE_OCTET_STRING:
@@ -911,80 +1152,82 @@ static void render_object(Object *object, int x, int y) {
       const char *str;
 
       /* if it's small, it might be something special */
-      if (object->string.len <= 8) {
+      if (object->data.string.len <= 8) {
         u64 val = octet_to_int(object);
 
         /* is it an ip address ? */
         if (octet_is_ip_address(object)) {
-          attron(COLOR_PAIR(COLOR_IP));
-          printw(" %"PRIu64 ".%"PRIu64 ".%"PRIu64 ".%"PRIu64, (val & 0xFF000000) >> 24, (val & 0xFF0000) >> 16, (val & 0xFF00) >> 8, val & 0xFF);
-          attroff(COLOR_PAIR(COLOR_IP));
+          wattron(window, COLOR_PAIR(COLOR_FOR_IP));
+          wprintw(window, " %"PRIu64 ".%"PRIu64 ".%"PRIu64 ".%"PRIu64, (val & 0xFF000000) >> 24, (val & 0xFF0000) >> 16, (val & 0xFF00) >> 8, val & 0xFF);
+          wattroff(window, COLOR_PAIR(COLOR_FOR_IP));
           break;
         }
 
         /* could it be a timestamp ? */
         str = int_to_time(val);
         if (str) {
-          attron(COLOR_PAIR(COLOR_TIME));
-          printw(" %s", str);
-          attroff(COLOR_PAIR(COLOR_TIME));
+          wattron(window, COLOR_PAIR(COLOR_FOR_TIME));
+          wprintw(window, " %s", str);
+          wattroff(window, COLOR_PAIR(COLOR_FOR_TIME));
 
-          printw(" (");
-          attron(COLOR_PAIR(COLOR_INT));
-          printw("%"PRIu64, val);
-          attroff(COLOR_PAIR(COLOR_INT));
-          printw(")");
+          wprintw(window, " (");
+          wattron(window, COLOR_PAIR(COLOR_FOR_INT));
+          wprintw(window, "%"PRIu64, val);
+          wattroff(window, COLOR_PAIR(COLOR_FOR_INT));
+          wprintw(window, ")");
           break;
         }
 
         /* otherwise just print it as a number */
-        attron(COLOR_PAIR(COLOR_INT));
-        printw(" %"PRIu64, val);
-        attroff(COLOR_PAIR(COLOR_INT));
+        wattron(window, COLOR_PAIR(COLOR_FOR_INT));
+        wprintw(window, " %"PRIu64, val);
+        wattroff(window, COLOR_PAIR(COLOR_FOR_INT));
         break;
       }
 
       /* could it be a numberstring? */
       str = octet_to_numberstring(object);
       if (str) {
-        attron(COLOR_PAIR(COLOR_STRING));
-        printw(" %s", str);
-        attroff(COLOR_PAIR(COLOR_STRING));
+        wattron(window, COLOR_PAIR(COLOR_FOR_STRING));
+        wprintw(window, " %s", str);
+        wattroff(window, COLOR_PAIR(COLOR_FOR_STRING));
         break;
       }
 
       /* is it printable as a string? */
       if (octet_is_printable(object)) {
-        printw(" \"%.*s\"", object->string.len, object->string.value);
+        wattron(window, COLOR_PAIR(COLOR_FOR_STRING));
+        wprintw(window, " \"%.*s\"", object->data.string.len, object->data.string.value);
+        wattroff(window, COLOR_PAIR(COLOR_FOR_STRING));
         break;
       }
 
       /* otherwise print as hex */
-      attron(COLOR_PAIR(COLOR_HEX));
-      printw(" 0x");
-      for (i = 0; i < object->string.len; ++i) {
+      wattron(window, COLOR_PAIR(COLOR_FOR_HEX));
+      wprintw(window, " 0x");
+      for (i = 0; i < object->data.string.len; ++i) {
         if (i >= 20) {
-          attroff(COLOR_PAIR(COLOR_HEX));
-          printw("...");
+          wattroff(window, COLOR_PAIR(COLOR_FOR_HEX));
+          wprintw(window, "...");
           break;
         }
-        printw("%.2x", object->string.value[i]);
+        wprintw(window, "%.2x", object->data.string.value[i]);
       }
-      attroff(COLOR_PAIR(COLOR_HEX));
+      wattroff(window, COLOR_PAIR(COLOR_FOR_HEX));
 
     } break;
 
     case TYPE_PRINTABLE_STRING:
     case TYPE_IA5_STRING:
     case TYPE_UTF8_STRING:
-      attron(COLOR_PAIR(COLOR_STRING));
-      printw(" \"%.*s\"", object->string.len, object->string.value);
-      attroff(COLOR_PAIR(COLOR_STRING));
+      wattron(window, COLOR_PAIR(COLOR_FOR_STRING));
+      wprintw(window, " \"%.*s\"", object->data.string.len, object->data.string.value);
+      wattroff(window, COLOR_PAIR(COLOR_FOR_STRING));
       break;
 
     default:
       print_error("Type not supported:\n");
-      print_definition(object->header.type, 0);
+      print_definition(object->type, 0);
       exit(1);
   }
 }
@@ -992,39 +1235,39 @@ static void render_object(Object *object, int x, int y) {
 static void dump_object_tree(Object *object, int indent, int max_indent) {
   Object **d;
 
-  switch (object->header.type->type) {
+  switch (object->type->type) {
     case TYPE_CHOICE:
-      if (object->header.name)
-        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, object->header.name, NORMAL);
+      if (object->name)
+        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, object->name, NORMAL);
       if (!max_indent || indent+1 < max_indent)
-        dump_object_tree(object->choice.value, indent+1, max_indent);
+        dump_object_tree(object->data.choice.value, indent+1, max_indent);
       break;
     case TYPE_SEQUENCE:
-      if (object->header.name)
-        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, object->header.name, NORMAL);
+      if (object->name)
+        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, object->name, NORMAL);
       if (!max_indent || indent+1 < max_indent)
-        array_foreach(object->sequence.values, d)
+        array_foreach(object->data.sequence.values, d)
           dump_object_tree(*d, indent+1, max_indent);
       break;
 
     case TYPE_LIST:
-      if (object->header.name)
-        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, object->header.name, NORMAL);
+      if (object->name)
+        printf(TABS "%s%s%s\n", TAB(indent), NORMAL, object->name, NORMAL);
       if (!max_indent || indent+1 < max_indent)
-        array_foreach(object->sequence.values, d)
+        array_foreach(object->data.sequence.values, d)
           dump_object_tree(*d, indent+1, max_indent);
       break;
 
     case TYPE_BOOLEAN:
-      if (object->header.name)
-        printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->header.name, NORMAL);
-      printf("%s%s%s\n", MAGENTA, object->integer.value ? "TRUE" : "FALSE", NORMAL);
+      if (object->name)
+        printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->name, NORMAL);
+      printf("%s%s%s\n", MAGENTA, object->data.integer.value ? "TRUE" : "FALSE", NORMAL);
       break;
 
     case TYPE_INTEGER:
-      if (object->header.name)
-        printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->header.name, NORMAL);
-      printf("%s%"PRIu64 "%s\n", GREEN, object->integer.value, NORMAL);
+      if (object->name)
+        printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->name, NORMAL);
+      printf("%s%"PRIu64 "%s\n", GREEN, object->data.integer.value, NORMAL);
       break;
 
     case TYPE_OCTET_STRING:
@@ -1036,11 +1279,11 @@ static void dump_object_tree(Object *object, int indent, int max_indent) {
       int i;
       const char *str;
 
-      if (object->header.name)
-        printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->header.name, NORMAL);
+      if (object->name)
+        printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->name, NORMAL);
 
       /* if it's small, it might be something special */
-      if (object->string.len <= 8) {
+      if (object->data.string.len <= 8) {
         u64 val = octet_to_int(object);
 
         if (octet_is_ip_address(object)) {
@@ -1070,18 +1313,18 @@ static void dump_object_tree(Object *object, int indent, int max_indent) {
 
       /* is it printable as a string? */
       if (octet_is_printable(object)) {
-        printf(" (%s" "\"%.*s\"" "%s)", CYAN, object->string.len, object->string.value, NORMAL);
+        printf(" (%s" "\"%.*s\"" "%s)", CYAN, object->data.string.len, object->data.string.value, NORMAL);
         break;
       }
 
       /* otherwise print as hex */
       printf("%s0x", BLUE);
-      for (i = 0; i < object->string.len; ++i) {
+      for (i = 0; i < object->data.string.len; ++i) {
         if (i >= 20) {
           printf("%s...", NORMAL);
           break;
         }
-        printf("%.2x", object->string.value[i]);
+        printf("%.2x", object->data.string.value[i]);
       }
       printf("%s", NORMAL);
 
@@ -1090,14 +1333,14 @@ static void dump_object_tree(Object *object, int indent, int max_indent) {
     case TYPE_PRINTABLE_STRING:
     case TYPE_IA5_STRING:
     case TYPE_UTF8_STRING:
-      if (object->header.name)
-        printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->header.name, NORMAL);
-      printf("%s\"%.*s\"%s\n", CYAN, object->string.len, object->string.value, NORMAL);
+      if (object->name)
+        printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->name, NORMAL);
+      printf("%s\"%.*s\"%s\n", CYAN, object->data.string.len, object->data.string.value, NORMAL);
       break;
 
     default:
       print_error("Type not supported:\n");
-      print_definition(object->header.type, 0);
+      print_definition(object->type, 0);
       exit(1);
   }
 }

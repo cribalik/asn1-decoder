@@ -1,5 +1,6 @@
 /* TODO:
- * Improve tree rendering, don't
+ * Add BER encoder, so we can save edits
+ * Just render the part of the tree that's going to show on screen
  * Support object editing
  * Support Bit string (with enum specs) and Enum
  * Support explicit tags

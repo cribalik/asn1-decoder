@@ -90,8 +90,13 @@ struct Object {
 static struct {
   Array(unsigned char) data_begin;
   unsigned char *data;
+
   Array(ASN1_Typedef) types;
+
   Object *current_object;
+
+  WINDOW *statusw, *objw, *editw, *edit_input;
+  Array(char) edit_buffer;
 } Global;
 
 int strstri(const char *needle, const char *haystack) {
@@ -813,20 +818,78 @@ static void print_help(WINDOW* window) {
   mvwprintw(window, y++, w/6, "q  quit");
   mvwprintw(window, y++, w/6, "?  help");
   mvwprintw(window, y++, w/6, "=  collapse all siblings");
+  mvwprintw(window, y++, w/6, "e  edit");
 }
 
-static void render_status_bar(WINDOW *statusw) {
-  mvwprintw(statusw, 0, 0, "  ?: help   q: quit");
+static void render_status_bar() {
+  mvwprintw(Global.statusw, 0, 0, "  ?: help   q: quit  e: edit");
 }
 
 typedef enum {
   MODE_NORMAL,
-  MODE_HELP
+  MODE_HELP,
+  MODE_EDIT
 } Mode;
+
+static void edit_init() {
+  int w,h, x,y;
+  if (Global.editw)
+    return;
+
+  getmaxyx(stdscr, h, w);
+
+  y = h/2 - 5;
+  x = w/2 - 15;
+  Global.editw = subwin(Global.objw, 10, 30, y, x);
+  Global.edit_input = subwin(Global.editw, 1, 24, y + 4, x + 3);
+
+  wbkgdset(Global.edit_input, COLOR_PAIR(CURSES_INV));
+  array_resize(Global.edit_buffer, 0);
+}
+
+static void edit_end() {
+  delwin(Global.editw);
+  delwin(Global.edit_input);
+  Global.editw = Global.edit_input = 0;
+}
+
+static void render_edit() {
+  int w, l;
+  Object *o;
+
+  o = Global.current_object;
+
+  werase(Global.editw);
+  werase(Global.edit_input);
+
+  w = getmaxx(Global.editw);
+  box(Global.editw, '|', '-');
+
+  l = strlen(o->name);
+  mvwprintw(Global.editw, 2, w/2 - l/2, "%s", o->name);
+
+  wattron(Global.edit_input, COLOR_PAIR(CURSES_INV));
+  mvwprintw(Global.edit_input, 0, 0, "%.*s", array_len(Global.edit_buffer), Global.edit_buffer);
+  wattroff(Global.edit_input, COLOR_PAIR(CURSES_INV));
+}
+
+static void message_box(const char *str) {
+  int w,h, l;
+  WINDOW *win;
+  getmaxyx(stdscr, h, w);
+  l = strlen(str);
+  win = subwin(stdscr, 5, l + 4, h/2 - 3, w/2 - l/2 - 2);
+  werase(win);
+  box(win, '|', '-');
+  mvwprintw(win, 2, 2, "%s", str);
+  wrefresh(win);
+  wgetch(win);
+  delwin(win);
+}
+
 static void run_interactive(ASN1_Typedef *start_type) {
   Object *root;
   Mode mode = MODE_NORMAL;
-  WINDOW *objw, *statusw;
   int width, height;
 
   initscr();
@@ -838,13 +901,13 @@ static void run_interactive(ASN1_Typedef *start_type) {
   init_pair(CURSES_INV, COLOR_BLACK, COLOR_WHITE);
   getmaxyx(stdscr, height, width);
 
-  objw = newwin(height-1, width, 0, 0);
-  keypad(objw, 1);
-  scrollok(objw, 1);
+  Global.objw = newwin(height-1, width, 0, 0);
+  keypad(Global.objw, 1);
+  scrollok(Global.objw, 1);
 
-  statusw = newwin(1, width, height-1, 0);
-  wcolor_set(statusw, COLOR_FOR_STATUSBAR, 0);
-  wbkgdset(statusw, COLOR_PAIR(COLOR_FOR_STATUSBAR));
+  Global.statusw = newwin(1, width, height-1, 0);
+  wcolor_set(Global.statusw, COLOR_FOR_STATUSBAR, 0);
+  wbkgdset(Global.statusw, COLOR_PAIR(COLOR_FOR_STATUSBAR));
 
   root = Global.current_object = decode(start_type->type, start_type->name, 0, 0, 0);
   for (;;) {
@@ -852,39 +915,78 @@ static void run_interactive(ASN1_Typedef *start_type) {
 
     getmaxyx(stdscr, h, w);
     if (w != width || h != height) {
-      wresize(objw, h-1, w);
-      mvwin(objw, 0, 0);
-      wresize(statusw, 1, w);
-      mvwin(statusw, h-1, 0);
+      wresize(Global.objw, h-1, w);
+      mvwin(Global.objw, 0, 0);
+      wresize(Global.statusw, 1, w);
+      mvwin(Global.statusw, h-1, 0);
       width = w, height = h;
     }
 
-    getmaxyx(objw, y_max, x_max);
+    werase(Global.objw);
+    werase(Global.statusw);
+
+    getmaxyx(Global.objw, y_max, x_max);
     y = 0;
     current_object_y = -1;
-    werase(objw);
-    werase(statusw);
     switch (mode) {
     case MODE_NORMAL:
-      render_tree(objw, root, 0, x_max, &y, y_max, &current_object_y);
-      render_status_bar(statusw);
+      render_tree(Global.objw, root, 0, x_max, &y, y_max, &current_object_y);
+      render_status_bar(Global.statusw);
       break;
     case MODE_HELP:
-      print_help(objw);
+      print_help(Global.objw);
+      break;
+    case MODE_EDIT:
+      render_tree(Global.objw, root, 0, x_max, &y, y_max, &current_object_y);
+      render_edit();
+      touchwin(Global.objw);
+      render_status_bar(Global.statusw);
       break;
     }
-    wrefresh(objw);
-    wrefresh(statusw);
 
-    c = wgetch(objw);
+    wrefresh(Global.objw);
+    if (Global.editw) {
+      wrefresh(Global.editw);
+      wrefresh(Global.edit_input);
+    }
+    wrefresh(Global.statusw);
+
+    c = wgetch(Global.objw);
+
     switch (mode) {
     case MODE_HELP:
+      mode = MODE_NORMAL;
+      break;
+    case MODE_EDIT:
+      if (c == KEY_ENTER || c == 10 || c == 13) {
+        array_push(Global.edit_buffer, 0);
+        Global.current_object->data.integer.value = atol(Global.edit_buffer);/*strtoull(Global.edit_buffer, 0, 10);*/
+        goto end_edit;
+      }
+      else if (isdigit(c))
+        array_push(Global.edit_buffer, c);
+      else
+        goto end_edit;
+
+      break;
+
+      end_edit:
+      edit_end();
       mode = MODE_NORMAL;
       break;
     case MODE_NORMAL:
       switch (c) {
       case 'q':
         goto done;
+
+      case 'e':
+        if (Global.current_object->type->type != TYPE_INTEGER) {
+          message_box("Editing only supported for integers");
+          break;
+        }
+        edit_init();
+        mode = MODE_EDIT;
+        break;
 
       case '?':
         mode = MODE_HELP;

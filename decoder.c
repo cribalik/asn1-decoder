@@ -53,7 +53,7 @@ struct Object {
 
   /* asn1 data */
   Object *parent;
-  char *name;
+  const char *name;
   ASN1_Type *type;
   union {
     struct {
@@ -91,6 +91,7 @@ struct Object {
 static struct {
   Array(unsigned char) data_begin;
   unsigned char *data;
+  const char *filename;
 
   Array(ASN1_Typedef) types;
 
@@ -478,6 +479,9 @@ static Object* decode(ASN1_Type *type, char *name, BerIdentifier *bi, unsigned c
   BerIdentifier ber_identifier;
   unsigned char *start;
 
+  if (Global.data >= array_end(Global.data_begin))
+    return 0;
+
   object = malloc(sizeof(Object));
   memset(object, 0, sizeof(*object));
   object->name = strdup(name);
@@ -803,7 +807,7 @@ enum {
 };
 
 static void render_object(WINDOW *window, Object *object, int x, int x_max, int y);
-static int render_tree(WINDOW *window, Object *object, int x, int x_max, int *y, int y_max, int *current_object_y);
+static int render_tree(WINDOW *window, Object *objects, int x, int x_max, int *y, int y_max, int *current_object_y);
 
 static void print_help(WINDOW* window) {
   int y = 2;
@@ -893,6 +897,15 @@ static void run_interactive(ASN1_Typedef *start_type) {
   Mode mode = MODE_NORMAL;
   int width, height;
 
+  /* create a fake root */
+  root = malloc(sizeof(*root));
+  root->parent = 0;
+  root->name = Global.filename;
+  root->type = malloc(sizeof(*root->type));
+  root->type->type = TYPE_LIST;
+  root->type->list.item_type = start_type->type;
+  root->data.sequence.values = 0;
+
   initscr();
   curs_set(0);
   start_color();
@@ -910,7 +923,17 @@ static void run_interactive(ASN1_Typedef *start_type) {
   wcolor_set(Global.statusw, COLOR_FOR_STATUSBAR, 0);
   wbkgdset(Global.statusw, COLOR_PAIR(COLOR_FOR_STATUSBAR));
 
-  root = Global.current_object = decode(start_type->type, start_type->name, 0, 0, 0);
+  for (;;) {
+    Object *o;
+
+    o = decode(start_type->type, start_type->name, 0, 0, 0);
+    if (!o)
+      break;
+    o->parent = root;
+    array_push(root->data.sequence.values, o);
+  }
+  Global.current_object = root;
+
   for (;;) {
     int c, y, y_max, x_max, current_object_y, w,h;
 
@@ -1153,7 +1176,6 @@ static int render_tree(WINDOW* window, Object *object, int x, int x_max, int *y,
   return 0;
 }
 
-
 static u64 octet_to_int(Object *object) {
   u64 val = 0;
   int i;
@@ -1193,7 +1215,7 @@ static char* int_to_time(u64 val) {
 }
 
 static char* octet_to_numberstring(Object *object) {
-  static char number[64];
+  static char number[17];
   int i;
   char *s = number;
 
@@ -1286,19 +1308,26 @@ static void render_object(WINDOW *window, Object *object, int x, int x_max, int 
           break;
         }
 
+        /* could it be a numberstring? */
+        str = octet_to_numberstring(object);
+        if (str) {
+          wattron(window, COLOR_PAIR(COLOR_FOR_STRING));
+          wprintw(window, " \"%s\"", str);
+          wattroff(window, COLOR_PAIR(COLOR_FOR_STRING));
+
+          wprintw(window, " (");
+          wattron(window, COLOR_PAIR(COLOR_FOR_INT));
+          wprintw(window, "%"PRIu64, val);
+          wattroff(window, COLOR_PAIR(COLOR_FOR_INT));
+          wprintw(window, ")");
+          break;
+        }
+
+
         /* otherwise just print it as a number */
         wattron(window, COLOR_PAIR(COLOR_FOR_INT));
         wprintw(window, " %"PRIu64, val);
         wattroff(window, COLOR_PAIR(COLOR_FOR_INT));
-        break;
-      }
-
-      /* could it be a numberstring? */
-      str = octet_to_numberstring(object);
-      if (str) {
-        wattron(window, COLOR_PAIR(COLOR_FOR_STRING));
-        wprintw(window, " %s", str);
-        wattroff(window, COLOR_PAIR(COLOR_FOR_STRING));
         break;
       }
 
@@ -1369,7 +1398,7 @@ static void dump_object_tree(Object *object, int indent, int max_indent) {
     case TYPE_BOOLEAN:
       if (object->name)
         printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->name, NORMAL);
-      printf("%s%s%s\n", MAGENTA, object->data.integer.value ? "TRUE" : "FALSE", NORMAL);
+      printf("%s%s%s\n", BLUE, object->data.integer.value ? "TRUE" : "FALSE", NORMAL);
       break;
 
     case TYPE_INTEGER:
@@ -1395,46 +1424,47 @@ static void dump_object_tree(Object *object, int indent, int max_indent) {
         u64 val = octet_to_int(object);
 
         if (octet_is_ip_address(object)) {
-          printf("%s%"PRIu64 ".%"PRIu64 ".%"PRIu64 ".%"PRIu64 "%s", CYAN, (val & 0xFF000000) >> 24, (val & 0xFF0000) >> 16, (val & 0xFF00) >> 8, val & 0xFF, NORMAL);
+          printf("%s%"PRIu64 ".%"PRIu64 ".%"PRIu64 ".%"PRIu64 "%s\n", BLUE, (val & 0xFF000000) >> 24, (val & 0xFF0000) >> 16, (val & 0xFF00) >> 8, val & 0xFF, NORMAL);
           break;
         }
 
         /* could it be a timestamp ? */
         str = int_to_time(val);
         if (str) {
-          printf("%s%s%s", GREEN, str, NORMAL);
-          printf(" (%s%"PRIu64 "%s)", MAGENTA, val, NORMAL);
+          printf("%s%s%s", BLUE, str, NORMAL);
+          printf(" (%s%"PRIu64 "%s)\n", GREEN, val, NORMAL);
+          break;
+        }
+
+        /* could it be a numberstring? */
+        str = octet_to_numberstring(object);
+        if (str) {
+          printf("\"%s%s%s\"", BLUE, str, NORMAL);
+          printf(" (%s%"PRIu64 "%s)\n", GREEN, val, NORMAL);
           break;
         }
 
         /* otherwise just print it as a number */
-        printf("%s%"PRIu64"%s", GREEN, val, NORMAL);
-        break;
-      }
-
-      /* could it be a numberstring? */
-      str = octet_to_numberstring(object);
-      if (str) {
-        printf("%s%s%s", MAGENTA, str, NORMAL);
+        printf("%s%"PRIu64"%s\n", GREEN, val, NORMAL);
         break;
       }
 
       /* is it printable as a string? */
       if (octet_is_printable(object)) {
-        printf(" (%s" "\"%.*s\"" "%s)", CYAN, object->data.string.len, object->data.string.value, NORMAL);
+        printf(" (%s" "\"%.*s\"" "%s)\n", BLUE, object->data.string.len, object->data.string.value, NORMAL);
         break;
       }
 
       /* otherwise print as hex */
-      printf("%s0x", BLUE);
+      printf("%s0x", GREEN);
       for (i = 0; i < object->data.string.len; ++i) {
         if (i >= 20) {
-          printf("%s...", NORMAL);
+          printf("%s...\n", NORMAL);
           break;
         }
         printf("%.2x", object->data.string.value[i]);
       }
-      printf("%s", NORMAL);
+      printf("%s\n", NORMAL);
 
     } break;
 
@@ -1443,7 +1473,7 @@ static void dump_object_tree(Object *object, int indent, int max_indent) {
     case TYPE_UTF8_STRING:
       if (object->name)
         printf(TABS "%s%s%s ", TAB(indent), NORMAL, object->name, NORMAL);
-      printf("%s\"%.*s\"%s\n", CYAN, object->data.string.len, object->data.string.value, NORMAL);
+      printf("%s\"%.*s\"%s\n", BLUE, object->data.string.len, object->data.string.value, NORMAL);
       break;
 
     default:
@@ -1528,6 +1558,7 @@ int main(int argc, const char **argv) {
   /* read file */
 
   Global.data_begin = Global.data = file_get_contents(binary_file);
+  Global.filename = binary_file;
   if (!Global.data)
     die("Failed to read contents of %s: %s\n", binary_file, strerror(errno));
 

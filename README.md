@@ -2,10 +2,9 @@
 
 # Build
 
-apt install byacc
-apt install flex
-make
+ * `apt install byacc flex`
+ * `make`
 
 # Run
 
-./decoder ASN1FILE... BINARY TYPENAME
+`./decoder ASN1FILE... BINARY TYPENAME [OPTIONS]`
